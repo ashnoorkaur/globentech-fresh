@@ -1,9 +1,29 @@
-import { Text, ScrollView } from 'react-native';
+import { ScrollView, StyleSheet, Text } from "react-native";
+import { ProjectFooter } from "../../components/project-footer";
+import { useAppTheme } from "../../lib/theme";
 
 export default function MyOrders() {
+  const theme = useAppTheme();
+
   return (
-    <ScrollView style={{ padding: 20 }}>
-      <Text>My Orders Page</Text>
+    <ScrollView
+      style={[styles.page, { backgroundColor: theme.colors.background }]}
+      contentContainerStyle={styles.content}
+    >
+      <Text style={[styles.title, { color: theme.colors.text }]}>
+        My Orders
+      </Text>
+      <Text style={[styles.text, { color: theme.colors.textMuted }]}>
+        My Orders page
+      </Text>
+      <ProjectFooter colors={theme.colors} />
     </ScrollView>
   );
 }
+
+const styles = StyleSheet.create({
+  page: { flex: 1 },
+  content: { padding: 20, paddingBottom: 32 },
+  title: { fontSize: 28, fontWeight: "800", marginBottom: 8 },
+  text: { fontSize: 14 },
+});

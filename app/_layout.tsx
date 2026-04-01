@@ -1,24 +1,84 @@
-import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
-import { Stack } from 'expo-router';
-import { StatusBar } from 'expo-status-bar';
-import 'react-native-reanimated';
-
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import {
+    DarkTheme,
+    DefaultTheme,
+    ThemeProvider,
+} from "@react-navigation/native";
+import { Stack } from "expo-router";
+import { StatusBar } from "expo-status-bar";
+import "react-native-reanimated";
+import { useAppTheme } from "../lib/theme";
 
 export const unstable_settings = {
-  anchor: '(tabs)',
+  anchor: "(tabs)",
 };
 
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
+  const theme = useAppTheme();
 
   return (
-    <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+    <ThemeProvider value={theme.isDark ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: 'modal', title: 'Modal' }} />
+        <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="signup" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-dashboard" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-approvals" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-calendar" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="admin-order-history"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen name="admin-users" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-equipment" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-reports" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="customer-dashboard"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="customer-my-orders"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="customer-order-history"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="customer-new-order"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="customer-contact"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="technician-dashboard"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="technician-tasks"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="technician-equipment"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="technician-samples"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="technician-calendar"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen name="profile" options={{ headerShown: false }} />
+        <Stack.Screen name="settings" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="modal"
+          options={{ presentation: "modal", title: "Modal" }}
+        />
       </Stack>
-      <StatusBar style="auto" />
+      <StatusBar style={theme.isDark ? "light" : "dark"} />
     </ThemeProvider>
   );
 }

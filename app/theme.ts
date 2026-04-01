@@ -1,17 +1,9 @@
-export let isDarkMode = false;
+import React from "react";
+// Re-exported from lib/theme. This file exists only to prevent import breakage.
+// Do not add business logic here.
+export * from "../lib/theme";
 
-export const setDarkMode = (value: boolean) => {
-  isDarkMode = value;
-};
-
-export const lightTheme = {
-  background: '#EEF3F9',
-  card: '#FFFFFF',
-  text: '#111827',
-};
-
-export const darkTheme = {
-  background: '#111827',
-  card: '#1F2937',
-  text: '#FFFFFF',
-};
+// Satisfies Expo Router's requirement for a default export on files inside app/
+export default function ThemeModule(): React.ReactElement | null {
+  return null;
+}

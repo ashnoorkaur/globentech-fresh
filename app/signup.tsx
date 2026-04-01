@@ -1,58 +1,111 @@
-import { router } from 'expo-router';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { ref, set } from 'firebase/database';
-import { useState } from 'react';
+import { router } from "expo-router";
+import { createUserWithEmailAndPassword } from "firebase/auth";
+import { ref, set } from "firebase/database";
+import { useState } from "react";
 import {
     ActivityIndicator,
-    Alert,
+    KeyboardAvoidingView,
+    Platform,
+    SafeAreaView,
+    ScrollView,
     StyleSheet,
     Text,
     TextInput,
     TouchableOpacity,
     View,
-} from 'react-native';
-import { auth, db } from '../firebase/config';
+} from "react-native";
+import { FeedbackModal } from "../components/ui/feedback-modal";
+import { auth, db } from "../firebase/config";
+import { useAppTheme } from "../lib/theme";
+
+type ModalState = {
+  visible: boolean;
+  title: string;
+  message: string;
+  variant: "info" | "success" | "error";
+  onConfirm?: () => void;
+};
 
 export default function SignUpScreen() {
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
+  const theme = useAppTheme();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [company, setCompany] = useState("");
+  const [address, setAddress] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [modal, setModal] = useState<ModalState>({
+    visible: false,
+    title: "",
+    message: "",
+    variant: "info",
+  });
 
-  const isValidEmail = (value: string) => {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  const showModal = (
+    title: string,
+    message: string,
+    variant: "info" | "success" | "error" = "info",
+    onConfirm?: () => void,
+  ) => {
+    setModal({ visible: true, title, message, variant, onConfirm });
   };
 
-  const isStrongPassword = (value: string) => {
-    return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{6,}$/.test(value);
-  };
+  const isValidEmail = (value: string) =>
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 
   const handleSignUp = async () => {
-    if (name.trim().length > 20) {
-        Alert.alert('Invalid Name', 'Name cannot be more than 20 characters.');
-        return; 
+    if (!name.trim()) {
+      showModal("Required Field", "Full name is required.", "error");
+      return;
     }
     if (!/^[A-Za-z\s]+$/.test(name.trim())) {
-        Alert.alert('Invalid Name', 'Name should contain only letters.');
-        return; 
+      showModal("Invalid Name", "Name should contain only letters.", "error");
+      return;
+    }
+    if (name.trim().length > 20) {
+      showModal("Invalid Name", "Name cannot exceed 20 characters.", "error");
+      return;
     }
 
-    if (email.trim().length > 40) {
-        Alert.alert('Invalid Email', 'Email cannot exceed 40 characters.');
-        return; 
+    if (!email.trim()) {
+      showModal("Required Field", "Email address is required.", "error");
+      return;
+    }
+    if (!isValidEmail(email.trim())) {
+      showModal(
+        "Invalid Email",
+        "Please enter a valid email address containing @.",
+        "error",
+      );
+      return;
     }
 
-    if (!isStrongPassword(password)) {
-      Alert.alert(
-        'Weak Password',
-        'Password must be at least 6 characters and include one uppercase letter, one lowercase letter, one number, and one special character.'
+    if (phone.trim() && !/^\d+$/.test(phone.trim())) {
+      showModal(
+        "Invalid Phone",
+        "Phone number must contain digits only.",
+        "error",
+      );
+      return;
+    }
+
+    if (!password) {
+      showModal("Required Field", "Password is required.", "error");
+      return;
+    }
+    if (password.length < 6 || password.length > 35) {
+      showModal(
+        "Invalid Password",
+        "Password must be between 6 and 35 characters.",
+        "error",
       );
       return;
     }
 
     if (password !== confirmPassword) {
-      Alert.alert('Password Mismatch', 'Passwords do not match.');
+      showModal("Password Mismatch", "Passwords do not match.", "error");
       return;
     }
 
@@ -62,7 +115,7 @@ export default function SignUpScreen() {
       const userCredential = await createUserWithEmailAndPassword(
         auth,
         email.trim(),
-        password
+        password,
       );
 
       const user = userCredential.user;
@@ -71,19 +124,32 @@ export default function SignUpScreen() {
         uid: user.uid,
         name: name.trim(),
         email: user.email,
-        role: 'customer',
+        phone: phone.trim(),
+        company: company.trim(),
+        address: address.trim(),
+        role: "customer",
         createdAt: new Date().toISOString(),
       });
 
-      Alert.alert('Success', 'Account created successfully.');
-      router.replace('/login');
+      showModal(
+        "Account Created",
+        "Your account was created successfully.",
+        "success",
+        () => {
+          router.replace("/login");
+        },
+      );
     } catch (error: any) {
-      if (error.code === 'auth/email-already-in-use') {
-        Alert.alert('Sign Up Failed', 'This email is already in use.');
-      } else if (error.code === 'auth/invalid-email') {
-        Alert.alert('Sign Up Failed', 'Please enter a valid email address.');
+      if (error.code === "auth/email-already-in-use") {
+        showModal("Sign Up Failed", "This email is already in use.", "error");
+      } else if (error.code === "auth/invalid-email") {
+        showModal(
+          "Sign Up Failed",
+          "Please enter a valid email address.",
+          "error",
+        );
       } else {
-        Alert.alert('Sign Up Failed', error.message);
+        showModal("Sign Up Failed", error.message, "error");
       }
     } finally {
       setLoading(false);
@@ -91,142 +157,398 @@ export default function SignUpScreen() {
   };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.card}>
-        <Text style={styles.title}>Create Account</Text>
-        <Text style={styles.subtitle}>Sign up to continue with GlobenTech</Text>
+    <SafeAreaView
+      style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
+    >
+      <View
+        style={[
+          styles.bgBubbleTop,
+          { backgroundColor: theme.colors.primarySoft },
+        ]}
+      />
+      <View
+        style={[
+          styles.bgBubbleBottom,
+          { backgroundColor: theme.colors.primarySoft },
+        ]}
+      />
 
-        <TextInput
-          style={styles.input}
-          placeholder="Full Name"
-          placeholderTextColor="#94A3B8"
-          value={name}
-          onChangeText={(text) => {
-            if(text.length <= 20) setName(text); 
-          }}
-          editable={!loading}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Email Address"
-          placeholderTextColor="#94A3B8"
-          value={email}
-          onChangeText={(text) => {
-            if(text.length <= 40) setEmail(text); 
-          }}
-          autoCapitalize="none"
-          keyboardType="email-address"
-          editable={!loading}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Password"
-          placeholderTextColor="#94A3B8"
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry
-          editable={!loading}
-        />
-
-        <TextInput
-          style={styles.input}
-          placeholder="Confirm Password"
-          placeholderTextColor="#94A3B8"
-          value={confirmPassword}
-          onChangeText={setConfirmPassword}
-          secureTextEntry
-          editable={!loading}
-        />
-
-        <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
-          onPress={handleSignUp}
-          disabled={loading}
+      <KeyboardAvoidingView
+        style={styles.keyboardView}
+        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {loading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.buttonText}>Sign Up</Text>
-          )}
-        </TouchableOpacity>
+          <View
+            style={[
+              styles.card,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
+            <Text
+              style={[
+                styles.badge,
+                {
+                  color: theme.colors.primary,
+                  backgroundColor: theme.colors.primarySoft,
+                },
+              ]}
+            >
+              CREATE ACCOUNT
+            </Text>
+            <Text style={[styles.title, { color: theme.colors.primary }]}>
+              Join GlobenTech
+            </Text>
+            <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
+              Create your profile and start booking services.
+            </Text>
 
-        <TouchableOpacity onPress={() => router.replace('/login')} disabled={loading}>
-          <Text style={styles.link}>Already have an account? Login</Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+            <View style={styles.labelRow}>
+              <Text style={[styles.label, { color: theme.colors.text }]}>
+                Full Name
+              </Text>
+              <Text style={styles.required}> *</Text>
+            </View>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                  color: theme.colors.text,
+                },
+              ]}
+              placeholder="Enter your full name (max 20 chars)"
+              placeholderTextColor="#94A3B8"
+              value={name}
+              onChangeText={(text) => {
+                if (text.length <= 20) setName(text);
+              }}
+              editable={!loading}
+            />
+
+            <View style={styles.labelRow}>
+              <Text style={[styles.label, { color: theme.colors.text }]}>
+                Email Address
+              </Text>
+              <Text style={styles.required}> *</Text>
+            </View>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                  color: theme.colors.text,
+                },
+              ]}
+              placeholder="Enter your email (must contain @)"
+              placeholderTextColor="#94A3B8"
+              value={email}
+              onChangeText={(text) => {
+                if (text.length <= 60) setEmail(text);
+              }}
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              editable={!loading}
+            />
+
+            <View style={styles.labelRow}>
+              <Text style={[styles.label, { color: theme.colors.text }]}>
+                Phone Number
+              </Text>
+              <Text style={styles.optional}> (optional)</Text>
+            </View>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                  color: theme.colors.text,
+                },
+              ]}
+              placeholder="Digits only, max 15"
+              placeholderTextColor="#94A3B8"
+              value={phone}
+              onChangeText={(text) => {
+                const digits = text.replace(/[^\d]/g, "");
+                if (digits.length <= 15) setPhone(digits);
+              }}
+              keyboardType="phone-pad"
+              editable={!loading}
+            />
+
+            <View style={styles.labelRow}>
+              <Text style={[styles.label, { color: theme.colors.text }]}>
+                Company Name
+              </Text>
+              <Text style={styles.optional}> (optional)</Text>
+            </View>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                  color: theme.colors.text,
+                },
+              ]}
+              placeholder="Enter your company name (max 35 chars)"
+              placeholderTextColor="#94A3B8"
+              value={company}
+              onChangeText={(text) => {
+                if (text.length <= 35) setCompany(text);
+              }}
+              editable={!loading}
+            />
+
+            <View style={styles.labelRow}>
+              <Text style={[styles.label, { color: theme.colors.text }]}>
+                Address
+              </Text>
+              <Text style={styles.optional}> (optional)</Text>
+            </View>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                  color: theme.colors.text,
+                },
+              ]}
+              placeholder="Enter your address (max 45 chars)"
+              placeholderTextColor="#94A3B8"
+              value={address}
+              onChangeText={(text) => {
+                if (text.length <= 45) setAddress(text);
+              }}
+              editable={!loading}
+            />
+
+            <View style={styles.labelRow}>
+              <Text style={[styles.label, { color: theme.colors.text }]}>
+                Password
+              </Text>
+              <Text style={styles.required}> *</Text>
+            </View>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                  color: theme.colors.text,
+                },
+              ]}
+              placeholder="Enter password (6–35 characters)"
+              placeholderTextColor="#94A3B8"
+              value={password}
+              onChangeText={(text) => {
+                if (text.length <= 35) setPassword(text);
+              }}
+              secureTextEntry
+              editable={!loading}
+            />
+
+            <View style={styles.labelRow}>
+              <Text style={[styles.label, { color: theme.colors.text }]}>
+                Confirm Password
+              </Text>
+              <Text style={styles.required}> *</Text>
+            </View>
+            <TextInput
+              style={[
+                styles.input,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                  color: theme.colors.text,
+                },
+              ]}
+              placeholder="Re-enter your password"
+              placeholderTextColor="#94A3B8"
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              secureTextEntry
+              editable={!loading}
+            />
+
+            <TouchableOpacity
+              style={[
+                styles.button,
+                { backgroundColor: theme.colors.primary },
+                loading && styles.buttonDisabled,
+              ]}
+              onPress={handleSignUp}
+              disabled={loading}
+            >
+              {loading ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.buttonText}>Create Account</Text>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => router.replace("/login")}
+              disabled={loading}
+            >
+              <Text style={[styles.link, { color: theme.colors.primary }]}>
+                Already have an account? Login
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+
+      <FeedbackModal
+        visible={modal.visible}
+        title={modal.title}
+        message={modal.message}
+        variant={modal.variant}
+        onConfirm={() => {
+          const callback = modal.onConfirm;
+          setModal((prev) => ({
+            ...prev,
+            visible: false,
+            onConfirm: undefined,
+          }));
+          callback?.();
+        }}
+      />
+    </SafeAreaView>
   );
 }
 
-const PRIMARY = '#23408E';
-const BACKGROUND = '#EEF3F9';
-const CARD = '#FFFFFF';
-const TEXT = '#1F2937';
-const SUBTEXT = '#6B7280';
-const BORDER = '#D9E2F1';
-
 const styles = StyleSheet.create({
-  container: {
+  safeArea: {
     flex: 1,
-    justifyContent: 'center',
-    padding: 24,
-    backgroundColor: BACKGROUND,
+    backgroundColor: "#E8EFFA",
+  },
+  keyboardView: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
+    padding: 20,
+    paddingVertical: 28,
+  },
+  bgBubbleTop: {
+    position: "absolute",
+    top: -90,
+    right: -60,
+    width: 240,
+    height: 240,
+    borderRadius: 120,
+    backgroundColor: "#C7D8F7",
+    opacity: 0.45,
+  },
+  bgBubbleBottom: {
+    position: "absolute",
+    bottom: -100,
+    left: -70,
+    width: 250,
+    height: 250,
+    borderRadius: 125,
+    backgroundColor: "#BFD2F5",
+    opacity: 0.35,
   },
   card: {
-    backgroundColor: CARD,
+    backgroundColor: "#FFFFFF",
     borderRadius: 24,
     padding: 24,
-    shadowColor: '#000',
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 4,
+    borderWidth: 1,
+    borderColor: "#D5E2F8",
+    shadowColor: "#1E3A8A",
+    shadowOpacity: 0.12,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 6,
+  },
+  badge: {
+    alignSelf: "flex-start",
+    color: "#3159A9",
+    backgroundColor: "#E9F0FF",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 999,
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.8,
+    marginBottom: 14,
   },
   title: {
-    fontSize: 28,
-    fontWeight: '700',
-    color: PRIMARY,
-    textAlign: 'center',
-    marginBottom: 8,
+    fontSize: 30,
+    fontWeight: "800",
+    color: "#1E3A8A",
+    marginBottom: 4,
   },
   subtitle: {
     fontSize: 14,
-    color: SUBTEXT,
-    textAlign: 'center',
-    marginBottom: 24,
+    color: "#64748B",
+    lineHeight: 21,
+    marginBottom: 20,
+  },
+  labelRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  label: {
+    color: "#334155",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  required: {
+    color: "#B42318",
+    fontSize: 13,
+    fontWeight: "700",
+  },
+  optional: {
+    color: "#94A3B8",
+    fontSize: 12,
+    fontWeight: "500",
   },
   input: {
-    backgroundColor: '#F8FAFD',
     borderWidth: 1,
-    borderColor: BORDER,
-    borderRadius: 14,
+    borderColor: "#CBD8EF",
+    backgroundColor: "#F8FAFD",
+    borderRadius: 12,
     paddingHorizontal: 14,
-    paddingVertical: 14,
+    paddingVertical: 13,
     fontSize: 15,
+    color: "#0F172A",
     marginBottom: 14,
-    color: TEXT,
   },
   button: {
-    backgroundColor: PRIMARY,
-    borderRadius: 14,
+    backgroundColor: "#1E3A8A",
+    borderRadius: 12,
     paddingVertical: 15,
-    alignItems: 'center',
-    marginTop: 6,
+    alignItems: "center",
+    marginTop: 8,
   },
   buttonDisabled: {
     opacity: 0.7,
   },
   buttonText: {
-    color: '#FFFFFF',
-    fontSize: 16,
-    fontWeight: '700',
+    color: "#FFFFFF",
+    fontSize: 15,
+    fontWeight: "800",
+    letterSpacing: 0.4,
   },
   link: {
-    textAlign: 'center',
+    textAlign: "center",
     marginTop: 18,
-    color: PRIMARY,
-    fontWeight: '600',
+    color: "#23408E",
+    fontWeight: "600",
   },
 });
