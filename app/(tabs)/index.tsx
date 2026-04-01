@@ -1,98 +1,268 @@
-import { Image } from 'expo-image';
-import { Platform, StyleSheet } from 'react-native';
+import { router } from 'expo-router';
+import { sendPasswordResetEmail, signInWithEmailAndPassword } from 'firebase/auth';
+import { get, ref } from 'firebase/database';
+import { useState } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
+import { auth, db } from '../../firebase/config';
 
-import { HelloWave } from '@/components/hello-wave';
-import ParallaxScrollView from '@/components/parallax-scroll-view';
-import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { Link } from 'expo-router';
+export default function LoginScreen() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [resetLoading, setResetLoading] = useState(false);
 
-export default function HomeScreen() {
+  const redirectByRole = (role: string) => {
+    if (role === 'admin') {
+      router.replace('../admin-dashboard');
+    } else if (role === 'technician') {
+      router.replace('../technician-dashboard');
+    } else {
+      router.replace('../dashboard'); 
+    }
+  };
+
+  const handleLogin = async () => {
+    if (!email.trim() || !password.trim()) {
+      Alert.alert('Missing Information', 'Please enter email and password.');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const userCredential = await signInWithEmailAndPassword(
+        auth,
+        email.trim(),
+        password.trim()
+      );
+
+      const user = userCredential.user;
+      const snapshot = await get(ref(db, `users/${user.uid}`));
+
+      if (!snapshot.exists()) {
+        Alert.alert('Profile Missing', 'User data not found in database.');
+        setLoading(false);
+        return;
+      }
+
+      const userData = snapshot.val();
+      const role = userData.role || 'customer';
+
+      Alert.alert('Success', `Logged in as ${role}`);
+      redirectByRole(role);
+    } catch (error: any) {
+      if (error.code === 'auth/invalid-credential') {
+        Alert.alert('Login Failed', 'Email or password is incorrect.');
+      } else if (error.code === 'auth/user-not-found') {
+        Alert.alert('Login Failed', 'No account found with this email.');
+      } else if (error.code === 'auth/wrong-password') {
+        Alert.alert('Login Failed', 'Incorrect password.');
+      } else if (error.code === 'auth/invalid-email') {
+        Alert.alert('Login Failed', 'Invalid email format.');
+      } else {
+        Alert.alert('Login Failed', error.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      Alert.alert('Email Required', 'Please enter your email first.');
+      return;
+    }
+
+    setResetLoading(true);
+
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      Alert.alert(
+        'Reset Link Sent',
+        `A password reset link has been sent to ${email.trim()}.`
+      );
+    } catch (error: any) {
+      if (error.code === 'auth/user-not-found') {
+        Alert.alert('Reset Failed', 'No account found with this email.');
+      } else if (error.code === 'auth/invalid-email') {
+        Alert.alert('Reset Failed', 'Please enter a valid email address.');
+      } else {
+        Alert.alert('Reset Failed', error.message);
+      }
+    } finally {
+      setResetLoading(false);
+    }
+  };
+
   return (
-    <ParallaxScrollView
-      headerBackgroundColor={{ light: '#A1CEDC', dark: '#1D3D47' }}
-      headerImage={
-        <Image
-          source={require('@/assets/images/partial-react-logo.png')}
-          style={styles.reactLogo}
-        />
-      }>
-      <ThemedView style={styles.titleContainer}>
-        <ThemedText type="title">Welcome!</ThemedText>
-        <HelloWave />
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 1: Try it</ThemedText>
-        <ThemedText>
-          Edit <ThemedText type="defaultSemiBold">app/(tabs)/index.tsx</ThemedText> to see changes.
-          Press{' '}
-          <ThemedText type="defaultSemiBold">
-            {Platform.select({
-              ios: 'cmd + d',
-              android: 'cmd + m',
-              web: 'F12',
-            })}
-          </ThemedText>{' '}
-          to open developer tools.
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <Link href="/modal">
-          <Link.Trigger>
-            <ThemedText type="subtitle">Step 2: Explore</ThemedText>
-          </Link.Trigger>
-          <Link.Preview />
-          <Link.Menu>
-            <Link.MenuAction title="Action" icon="cube" onPress={() => alert('Action pressed')} />
-            <Link.MenuAction
-              title="Share"
-              icon="square.and.arrow.up"
-              onPress={() => alert('Share pressed')}
-            />
-            <Link.Menu title="More" icon="ellipsis">
-              <Link.MenuAction
-                title="Delete"
-                icon="trash"
-                destructive
-                onPress={() => alert('Delete pressed')}
-              />
-            </Link.Menu>
-          </Link.Menu>
-        </Link>
+    <View style={styles.container}>
+      <View style={styles.card}>
+        <Text style={styles.title}>GlobenTech</Text>
+        <Text style={styles.subtitle}>
+          Laboratory Order Management System
+        </Text>
 
-        <ThemedText>
-          {`Tap the Explore tab to learn more about what's included in this starter app.`}
-        </ThemedText>
-      </ThemedView>
-      <ThemedView style={styles.stepContainer}>
-        <ThemedText type="subtitle">Step 3: Get a fresh start</ThemedText>
-        <ThemedText>
-          {`When you're ready, run `}
-          <ThemedText type="defaultSemiBold">npm run reset-project</ThemedText> to get a fresh{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> directory. This will move the current{' '}
-          <ThemedText type="defaultSemiBold">app</ThemedText> to{' '}
-          <ThemedText type="defaultSemiBold">app-example</ThemedText>.
-        </ThemedText>
-      </ThemedView>
-    </ParallaxScrollView>
+        <TextInput
+          style={styles.input}
+          placeholder="Email address"
+          placeholderTextColor="#94A3B8"
+          value={email}
+          onChangeText={setEmail}
+          autoCapitalize="none"
+          keyboardType="email-address"
+          editable={!loading && !resetLoading}
+        />
+
+        <View style={styles.passwordWrapper}>
+          <TextInput
+            style={styles.passwordInput}
+            placeholder="Password"
+            placeholderTextColor="#94A3B8"
+            value={password}
+            onChangeText={setPassword}
+            secureTextEntry={!showPassword}
+            editable={!loading && !resetLoading}
+          />
+          <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+            <Text style={styles.showText}>
+              {showPassword ? 'Hide' : 'Show'}
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        <TouchableOpacity
+          onPress={handleForgotPassword}
+          disabled={resetLoading || loading}
+        >
+          <Text style={styles.forgotText}>
+            {resetLoading ? 'Sending reset link...' : 'Forgot Password?'}
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[styles.loginButton, loading && styles.buttonDisabled]}
+          onPress={handleLogin}
+          disabled={loading || resetLoading}
+        >
+          {loading ? (
+            <ActivityIndicator color="#FFFFFF" />
+          ) : (
+            <Text style={styles.loginButtonText}>Login</Text>
+          )}
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={() => router.push('/signup')}>
+          <Text style={styles.linkText}>Don’t have an account? Sign Up</Text>
+        </TouchableOpacity>
+      </View>
+    </View>
   );
 }
 
+const PRIMARY = '#23408E';
+const BACKGROUND = '#EEF3F9';
+const CARD = '#FFFFFF';
+const TEXT = '#1F2937';
+const SUBTEXT = '#6B7280';
+const BORDER = '#D9E2F1';
+
 const styles = StyleSheet.create({
-  titleContainer: {
+  container: {
+    flex: 1,
+    backgroundColor: BACKGROUND,
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  card: {
+    backgroundColor: CARD,
+    borderRadius: 24,
+    padding: 24,
+    shadowColor: '#000',
+    shadowOpacity: 0.08,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 4,
+  },
+  title: {
+    fontSize: 30,
+    fontWeight: '700',
+    color: PRIMARY,
+    textAlign: 'center',
+  },
+  subtitle: {
+    fontSize: 14,
+    color: SUBTEXT,
+    textAlign: 'center',
+    marginTop: 6,
+    marginBottom: 24,
+  },
+  input: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    backgroundColor: '#F8FAFD',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+    fontSize: 15,
+    marginBottom: 14,
+    color: TEXT,
+  },
+  passwordWrapper: {
+    borderWidth: 1,
+    borderColor: BORDER,
+    backgroundColor: '#F8FAFD',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    marginBottom: 10,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'space-between',
   },
-  stepContainer: {
-    gap: 8,
-    marginBottom: 8,
+  passwordInput: {
+    flex: 1,
+    fontSize: 15,
+    color: TEXT,
+    paddingVertical: 14,
   },
-  reactLogo: {
-    height: 178,
-    width: 290,
-    bottom: 0,
-    left: 0,
-    position: 'absolute',
+  showText: {
+    color: PRIMARY,
+    fontWeight: '600',
+    marginLeft: 10,
+  },
+  forgotText: {
+    textAlign: 'right',
+    color: PRIMARY,
+    fontWeight: '600',
+    marginBottom: 16,
+    fontSize: 13,
+  },
+  loginButton: {
+    backgroundColor: PRIMARY,
+    borderRadius: 16,
+    paddingVertical: 15,
+    alignItems: 'center',
+  },
+  buttonDisabled: {
+    opacity: 0.7,
+  },
+  loginButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '700',
+  },
+  linkText: {
+    textAlign: 'center',
+    marginTop: 18,
+    color: PRIMARY,
+    fontWeight: '600',
   },
 });
