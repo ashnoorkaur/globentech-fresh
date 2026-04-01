@@ -20,24 +20,39 @@ export default function SignUpScreen() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const isValidEmail = (value: string) => {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+  };
+
+  const isStrongPassword = (value: string) => {
+    return /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z\d]).{6,}$/.test(value);
+  };
+
   const handleSignUp = async () => {
-    if (
-      !name.trim() ||
-      !email.trim() ||
-      !password.trim() ||
-      !confirmPassword.trim()
-    ) {
-      Alert.alert('Missing Information', 'Please fill in all fields.');
+    if (name.trim().length > 20) {
+        Alert.alert('Invalid Name', 'Name cannot be more than 20 characters.');
+        return; 
+    }
+    if (!/^[A-Za-z\s]+$/.test(name.trim())) {
+        Alert.alert('Invalid Name', 'Name should contain only letters.');
+        return; 
+    }
+
+    if (email.trim().length > 40) {
+        Alert.alert('Invalid Email', 'Email cannot exceed 40 characters.');
+        return; 
+    }
+
+    if (!isStrongPassword(password)) {
+      Alert.alert(
+        'Weak Password',
+        'Password must be at least 6 characters and include one uppercase letter, one lowercase letter, one number, and one special character.'
+      );
       return;
     }
 
     if (password !== confirmPassword) {
       Alert.alert('Password Mismatch', 'Passwords do not match.');
-      return;
-    }
-
-    if (password.length < 6) {
-      Alert.alert('Weak Password', 'Password must be at least 6 characters.');
       return;
     }
 
@@ -86,7 +101,9 @@ export default function SignUpScreen() {
           placeholder="Full Name"
           placeholderTextColor="#94A3B8"
           value={name}
-          onChangeText={setName}
+          onChangeText={(text) => {
+            if(text.length <= 20) setName(text); 
+          }}
           editable={!loading}
         />
 
@@ -95,7 +112,9 @@ export default function SignUpScreen() {
           placeholder="Email Address"
           placeholderTextColor="#94A3B8"
           value={email}
-          onChangeText={setEmail}
+          onChangeText={(text) => {
+            if(text.length <= 40) setEmail(text); 
+          }}
           autoCapitalize="none"
           keyboardType="email-address"
           editable={!loading}

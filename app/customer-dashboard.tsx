@@ -1,25 +1,28 @@
+import { router } from 'expo-router';
+import { signOut } from 'firebase/auth';
+import { get, ref } from 'firebase/database';
 import { useEffect, useState } from 'react';
 import {
-  Text,
-  View,
-  TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { router } from 'expo-router';
+import { isDarkMode, lightTheme, darkTheme } from './theme'; //  FIXED PATH
 import { auth, db } from '../firebase/config';
-import { get, ref } from 'firebase/database';
-import { signOut } from 'firebase/auth';
 
-export default function AdminDashboard() {
+export default function CustomerDashboard() {
   const [loading, setLoading] = useState(true);
   const [name, setName] = useState('');
 
+  const theme = isDarkMode ? darkTheme : lightTheme;
+
   useEffect(() => {
-    const checkRole = async () => {
+    const checkUser = async () => {
       const user = auth.currentUser;
 
-      // ❌ Not logged in
       if (!user) {
         router.replace('/login');
         return;
@@ -29,35 +32,25 @@ export default function AdminDashboard() {
         const snapshot = await get(ref(db, `users/${user.uid}`));
         const userData = snapshot.val();
 
-        // ❌ No data
         if (!userData) {
           router.replace('/login');
           return;
         }
 
-        // 🔁 If customer → send to customer dashboard
-        if (userData.role === 'customer') {
-          router.replace('/customer-dashboard');
+        if (userData.role === 'admin') {
+          router.replace('/admin-dashboard');
           return;
         }
 
-        // ❌ If not admin → block
-        if (userData.role !== 'admin') {
-          router.replace('/login');
-          return;
-        }
-
-        // ✅ Admin allowed
-        setName(userData.name || 'Admin');
+        setName(userData.name || 'User');
         setLoading(false);
 
       } catch (error) {
-        console.log('Error fetching user:', error);
         router.replace('/login');
       }
     };
 
-    checkRole();
+    checkUser();
   }, []);
 
   const handleLogout = async () => {
@@ -65,7 +58,7 @@ export default function AdminDashboard() {
     router.replace('/login');
   };
 
-  // ✅ LOADING SCREEN
+  // ✅ Loading Screen
   if (loading) {
     return (
       <View style={styles.loader}>
@@ -75,29 +68,53 @@ export default function AdminDashboard() {
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Admin Dashboard</Text>
+    <ScrollView style={[styles.container, { backgroundColor: theme.background }]}>
+      
+      <Text style={[styles.title, { color: theme.text }]}>
+        Customer Dashboard
+      </Text>
 
-      <Text style={styles.subtitle}>Welcome, {name}</Text>
+      <Text style={[styles.subtitle, { color: theme.text }]}>
+        Welcome, {name}
+      </Text>
 
-      {/* Admin Features */}
-      <TouchableOpacity style={styles.card}>
-        <Text style={styles.cardText}>Manage Users</Text>
+      {/* Orders */}
+      <TouchableOpacity style={[styles.card, { backgroundColor: theme.card }]}>
+        <Text style={[styles.cardText, { color: theme.text }]}>
+           Orders
+        </Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.card}>
-        <Text style={styles.cardText}>View Reports</Text>
+      {/* Create Order */}
+      <TouchableOpacity style={[styles.card, { backgroundColor: theme.card }]}>
+        <Text style={[styles.cardText, { color: theme.text }]}>
+          Create Order
+        </Text>
       </TouchableOpacity>
 
-      <TouchableOpacity style={styles.card}>
-        <Text style={styles.cardText}>System Settings</Text>
+      {/* My Orders */}
+      <TouchableOpacity style={[styles.card, { backgroundColor: theme.card }]}>
+        <Text style={[styles.cardText, { color: theme.text }]}>
+          My Orders
+        </Text>
+      </TouchableOpacity>
+
+      {/* Settings */}
+      <TouchableOpacity
+        style={[styles.card, { backgroundColor: theme.card }]}
+        onPress={() => router.push('/settings')}
+      >
+        <Text style={[styles.cardText, { color: theme.text }]}>
+          Settings
+        </Text>
       </TouchableOpacity>
 
       {/* Logout */}
       <TouchableOpacity style={styles.logout} onPress={handleLogout}>
         <Text style={styles.logoutText}>Logout</Text>
       </TouchableOpacity>
-    </View>
+
+    </ScrollView>
   );
 }
 
@@ -121,7 +138,7 @@ const styles = StyleSheet.create({
     fontSize: 26,
     fontWeight: 'bold',
     color: PRIMARY,
-    marginBottom: 10,
+    marginBottom: 8,
   },
 
   subtitle: {
@@ -131,19 +148,17 @@ const styles = StyleSheet.create({
   },
 
   card: {
-    backgroundColor: '#fff',
-    padding: 16,
+    backgroundColor: '#FFFFFF',
+    padding: 18,
     borderRadius: 12,
     marginBottom: 12,
-    shadowColor: '#000',
-    shadowOpacity: 0.05,
-    shadowRadius: 5,
-    elevation: 2,
+    elevation: 3,
   },
 
   cardText: {
-    fontSize: 15,
+    fontSize: 16,
     color: '#111827',
+    fontWeight: '500',
   },
 
   logout: {
@@ -155,7 +170,7 @@ const styles = StyleSheet.create({
   },
 
   logoutText: {
-    color: '#fff',
+    color: '#FFFFFF',
     fontWeight: 'bold',
   },
 });
