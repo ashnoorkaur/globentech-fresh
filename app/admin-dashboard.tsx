@@ -365,6 +365,7 @@ export default function AdminDashboard() {
         items={adminMenu}
         activeKey="dashboard"
         colors={theme.colors}
+        onLogout={handleLogout}
       />
 
       <Modal

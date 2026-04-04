@@ -1,6 +1,5 @@
 import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { signOut } from "firebase/auth";
 import { get, ref } from "firebase/database";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -17,7 +16,6 @@ import {
 } from "react-native";
 import { ProjectFooter } from "../components/project-footer";
 import { RoleMenuModal } from "../components/role-menu-modal";
-import { GradientButton } from "../components/ui/gradient-button";
 import { customerMenu } from "../constants/role-menus";
 import { auth, db } from "../firebase/config";
 import { useAppTheme } from "../lib/theme";
@@ -118,11 +116,6 @@ export default function CustomerDashboard() {
     checkUser();
   }, []);
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    router.replace("/login");
-  };
-
   const handleSend = () => {
     const trimmed = chatInput.trim();
 
@@ -151,7 +144,7 @@ export default function CustomerDashboard() {
         meta: "0 Active",
         button: "View Orders",
         icon: "clipboard-text-clock-outline",
-        onPress: () => router.push("/customer-my-orders"),
+        onPress: () => router.push("/my-orders"),
       },
       {
         title: "Order History",
@@ -159,7 +152,7 @@ export default function CustomerDashboard() {
         meta: "0 Completed",
         button: "View History",
         icon: "history",
-        onPress: () => router.push("/customer-order-history"),
+        onPress: () => router.push("/orders"),
       },
       {
         title: "New Order",
@@ -167,7 +160,15 @@ export default function CustomerDashboard() {
         meta: "New Request",
         button: "Create Order",
         icon: "flask-outline",
-        onPress: () => router.push("/customer-new-order"),
+        onPress: () => router.push("/create-order"),
+      },
+      {
+        title: "Contact Us",
+        description: "Reach support and get help with your requests",
+        meta: "Need Help?",
+        button: "Open Chat",
+        icon: "message-outline",
+        onPress: () => setChatVisible(true),
       },
     ],
     [],
@@ -200,44 +201,48 @@ export default function CustomerDashboard() {
         ]}
       />
 
-      <View
-        style={[
-          styles.headerRow,
-          {
-            backgroundColor: theme.colors.surface,
-            borderBottomColor: theme.colors.border,
-          },
-        ]}
-      >
-        <TouchableOpacity
-          style={styles.iconButton}
-          onPress={() => setMenuVisible(true)}
-        >
-          <Ionicons name="menu" size={26} color={theme.colors.text} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.profileBadge}
-          onPress={() => router.push("/settings")}
-        >
-          <Ionicons
-            name="person-circle-outline"
-            size={26}
-            color={theme.colors.primary}
-          />
-          <Text
-            style={[styles.profileBadgeText, { color: theme.colors.primary }]}
-          >
-            Customer
-          </Text>
-        </TouchableOpacity>
-      </View>
-
       <ScrollView
         style={styles.container}
         contentContainerStyle={styles.content}
         showsVerticalScrollIndicator={false}
       >
+        <View style={styles.headerRow}>
+          <TouchableOpacity
+            style={[
+              styles.iconButton,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+              },
+            ]}
+            onPress={() => setMenuVisible(true)}
+          >
+            <Ionicons name="menu" size={24} color={theme.colors.text} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.profileBadge,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+              },
+            ]}
+            onPress={() => router.push("/settings")}
+          >
+            <Ionicons
+              name="person-circle-outline"
+              size={26}
+              color={theme.colors.primary}
+            />
+            <Text
+              style={[styles.profileBadgeText, { color: theme.colors.primary }]}
+            >
+              Customer
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <View
           style={[
             styles.heroCard,
@@ -301,14 +306,21 @@ export default function CustomerDashboard() {
               {item.description}
             </Text>
 
-            <GradientButton style={styles.cardButton} onPress={item.onPress}>
+            <TouchableOpacity
+              style={[
+                styles.cardButton,
+                { backgroundColor: theme.colors.primary },
+              ]}
+              onPress={item.onPress}
+            >
               <Text style={styles.cardButtonText}>{item.button}</Text>
-            </GradientButton>
+            </TouchableOpacity>
           </View>
         ))}
+
         <View
           style={[
-            styles.systemBar,
+            styles.systemCard,
             {
               backgroundColor: theme.colors.surface,
               borderColor: theme.colors.border,
@@ -330,9 +342,7 @@ export default function CustomerDashboard() {
           </Text>
         </View>
 
-        <View style={styles.footerWrap}>
-          <ProjectFooter colors={theme.colors} />
-        </View>
+        <ProjectFooter colors={theme.colors} />
       </ScrollView>
 
       <TouchableOpacity
@@ -499,22 +509,34 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    borderBottomWidth: 1,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
+    marginBottom: 18,
   },
   iconButton: {
-    width: 40,
-    height: 40,
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    borderWidth: 1,
     alignItems: "center",
     justifyContent: "center",
+    shadowColor: "#1E3A8A",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   profileBadge: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
-    paddingHorizontal: 2,
-    paddingVertical: 4,
+    borderWidth: 1,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    shadowColor: "#1E3A8A",
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
   },
   profileBadgeText: {
     fontSize: 15,
@@ -587,21 +609,25 @@ const styles = StyleSheet.create({
   },
   cardButton: {
     borderRadius: 14,
-    overflow: "hidden",
+    paddingVertical: 13,
+    alignItems: "center",
   },
   cardButtonText: {
     color: "#FFFFFF",
     fontSize: 14,
     fontWeight: "800",
   },
-  systemBar: {
-    borderTopWidth: 1,
-    borderBottomWidth: 1,
-    marginHorizontal: -20,
-    paddingHorizontal: 18,
-    paddingVertical: 12,
+  systemCard: {
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 18,
+    marginTop: 2,
+    shadowColor: "#1E3A8A",
+    shadowOpacity: 0.08,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 2,
   },
-  footerWrap: { marginTop: 10, marginHorizontal: -20 },
   systemTitle: {
     fontSize: 18,
     fontWeight: "800",
@@ -631,6 +657,36 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     shadowOffset: { width: 0, height: 8 },
     elevation: 8,
+  },
+  menuOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.22)",
+    justifyContent: "flex-start",
+    paddingTop: 92,
+    paddingLeft: 20,
+    paddingRight: 80,
+  },
+  menuPanel: {
+    borderWidth: 1,
+    borderRadius: 22,
+    padding: 18,
+    shadowColor: "#1E3A8A",
+    shadowOpacity: 0.14,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 8,
+  },
+  menuTitle: {
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 10,
+  },
+  menuItem: {
+    paddingVertical: 12,
+  },
+  menuItemText: {
+    fontSize: 15,
+    fontWeight: "600",
   },
   modalOverlay: {
     flex: 1,

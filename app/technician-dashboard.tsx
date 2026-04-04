@@ -4,16 +4,16 @@ import { signOut } from "firebase/auth";
 import { get, ref } from "firebase/database";
 import { useEffect, useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    Modal,
-    Pressable,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { ProjectFooter } from "../components/project-footer";
 import { RoleMenuModal } from "../components/role-menu-modal";
@@ -365,6 +365,7 @@ export default function TechnicianDashboard() {
         items={technicianMenu}
         activeKey="dashboard"
         colors={theme.colors}
+        onLogout={handleLogout}
       />
 
       <Modal

@@ -1,11 +1,11 @@
-import { initializeApp } from 'firebase/app';
-import { getAuth } from 'firebase/auth';
-import { getDatabase } from 'firebase/database';
+import { initializeApp } from "firebase/app";
+import { getAuth } from "firebase/auth";
+import { getDatabase } from "firebase/database";
 
 const firebaseConfig = {
   apiKey: "AIzaSyAqrrEiD7qMIWQ4Kduatkg5YOJUejYn0js",
   authDomain: "globentech-e6551.firebaseapp.com",
-  databaseURL: "https://globentech-e6551-default-rtdb.firebaseio.com", // ✅ IMPORTANT
+  databaseURL: "https://globentech-e6551-default-rtdb.firebaseio.com",
   projectId: "globentech-e6551",
   storageBucket: "globentech-e6551.firebasestorage.app",
   messagingSenderId: "623498084736",
