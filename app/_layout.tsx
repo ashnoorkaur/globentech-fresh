@@ -18,9 +18,20 @@ export default function RootLayout() {
   return (
     <ThemeProvider value={theme.isDark ? DarkTheme : DefaultTheme}>
       <Stack>
+        <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
         <Stack.Screen name="signup" options={{ headerShown: false }} />
+        <Stack.Screen name="about" options={{ headerShown: false }} />
+        <Stack.Screen name="notifications" options={{ headerShown: false }} />
+        <Stack.Screen
+          name="chatbot"
+          options={{
+            headerShown: false,
+            presentation: "transparentModal",
+            animation: "slide_from_bottom",
+          }}
+        />
         <Stack.Screen name="admin-dashboard" options={{ headerShown: false }} />
         <Stack.Screen name="admin-approvals" options={{ headerShown: false }} />
         <Stack.Screen name="admin-calendar" options={{ headerShown: false }} />
@@ -37,10 +48,6 @@ export default function RootLayout() {
         />
         <Stack.Screen
           name="customer-my-orders"
-          options={{ headerShown: false }}
-        />
-        <Stack.Screen
-          name="customer-order-history"
           options={{ headerShown: false }}
         />
         <Stack.Screen
@@ -71,7 +78,13 @@ export default function RootLayout() {
           name="technician-calendar"
           options={{ headerShown: false }}
         />
+        <Stack.Screen
+          name="technician-contact"
+          options={{ headerShown: false }}
+        />
         <Stack.Screen name="profile" options={{ headerShown: false }} />
+        <Stack.Screen name="profile-edit" options={{ headerShown: false }} />
+        <Stack.Screen name="change-password" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
         <Stack.Screen
           name="modal"

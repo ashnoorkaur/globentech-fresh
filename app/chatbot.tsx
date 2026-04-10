@@ -1,202 +1,225 @@
-import { router } from 'expo-router';
-import { useState } from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
+import { useMemo, useState } from "react";
 import {
-  KeyboardAvoidingView,
-  Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
-} from 'react-native';
-import { useAppTheme } from '../lib/theme';
+} from "react-native";
+import {
+  appendChatMessages,
+  useChatSession,
+  type ChatMessage,
+} from "../lib/chatbot-session";
+import { useAppTheme } from "../lib/theme";
 
-type Message = {
-  id: string;
-  sender: 'user' | 'assistant';
-  text: string;
-};
-
-const initialMessages: Message[] = [
-  {
-    id: 'assistant-welcome',
-    sender: 'assistant',
-    text: 'Hi. I am the GlobenTech assistant. Ask about orders, account settings, or equipment support.',
-  },
-];
-
-const buildReply = (input: string) => {
+const getAiReply = (input: string) => {
   const text = input.toLowerCase();
 
-  if (text.includes('order')) {
-    return 'You can create an order from the customer dashboard and review order history from the orders screens.';
+  if (text.includes("order")) {
+    return "To manage orders, open My Orders or Order History from the menu. I can also guide you step by step.";
   }
 
-  if (text.includes('account') || text.includes('profile') || text.includes('password')) {
-    return 'Open Account Settings to update your profile, change your password, manage theme preference, or deactivate your account.';
+  if (text.includes("approval") || text.includes("admin")) {
+    return "Admin approvals are handled in the Approvals page. Use the top-left menu to switch quickly.";
   }
 
-  if (text.includes('equipment')) {
-    return 'Equipment activity is managed from dashboard actions and admin workflows. If you need a specific action, describe it.';
+  if (text.includes("equipment")) {
+    return "Equipment operations are available in the Equipment section. You can view list, add entries, and refresh data.";
   }
 
-  return 'I can help with orders, account settings, password changes, and general GlobenTech app navigation.';
+  if (text.includes("calendar") || text.includes("schedule")) {
+    return "Schedule and planning are under Calendar. Open menu and choose Calendar for your role.";
+  }
+
+  if (text.includes("report")) {
+    return "Reports can be generated in the Reports page by selecting type and option.";
+  }
+
+  return "I can help with orders, approvals, equipment, reports, and navigation. Ask me what you want to do.";
 };
 
-export default function ChatbotScreen() {
+export default function ChatbotPage() {
   const theme = useAppTheme();
-  const [input, setInput] = useState('');
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [input, setInput] = useState("");
+  const { messages } = useChatSession();
 
-  const handleSend = () => {
-    const trimmed = input.trim();
+  const canSend = useMemo(() => input.trim().length > 0, [input]);
 
-    if (!trimmed) {
-      return;
-    }
+  const sendMessage = () => {
+    const value = input.trim();
+    if (!value) return;
 
-    const nextUserMessage: Message = {
-      id: `${Date.now()}-user`,
-      sender: 'user',
-      text: trimmed,
+    const userMsg: ChatMessage = {
+      id: `u-${Date.now()}`,
+      from: "user",
+      text: value,
     };
 
-    const nextAssistantMessage: Message = {
-      id: `${Date.now()}-assistant`,
-      sender: 'assistant',
-      text: buildReply(trimmed),
+    const aiMsg: ChatMessage = {
+      id: `a-${Date.now()}`,
+      from: "ai",
+      text: getAiReply(value),
     };
 
-    setMessages((current) => [...current, nextUserMessage, nextAssistantMessage]);
-    setInput('');
+    appendChatMessages([userMsg, aiMsg]);
+    setInput("");
   };
 
   return (
-    <KeyboardAvoidingView
-      style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <View style={[styles.header, { backgroundColor: theme.colors.surface, borderBottomColor: theme.colors.border }]}> 
-        <TouchableOpacity onPress={() => router.back()}>
-          <Text style={[styles.backText, { color: theme.colors.primary }]}>Back</Text>
-        </TouchableOpacity>
-        <Text style={[styles.headerTitle, { color: theme.colors.text }]}>Chat</Text>
-        <View style={styles.headerSpacer} />
-      </View>
-
-      <ScrollView
-        style={styles.messagesWrap}
-        contentContainerStyle={styles.messagesContent}
-        showsVerticalScrollIndicator={false}
+    <View style={styles.overlay}>
+      <Pressable style={styles.backdrop} onPress={() => router.back()} />
+      <View
+        style={[
+          styles.sheet,
+          {
+            backgroundColor: theme.colors.surface,
+            borderColor: theme.colors.border,
+          },
+        ]}
       >
-        {messages.map((message) => {
-          const isUser = message.sender === 'user';
+        <View
+          style={[styles.header, { borderBottomColor: theme.colors.border }]}
+        >
+          <Text style={[styles.headerTitle, { color: theme.colors.text }]}>
+            AI Chatbot
+          </Text>
+          <Pressable
+            onPress={() => router.back()}
+            style={[
+              styles.closeBtn,
+              {
+                backgroundColor: theme.colors.surfaceMuted,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
+            <Ionicons name="close" size={18} color={theme.colors.text} />
+          </Pressable>
+        </View>
 
-          return (
+        <ScrollView
+          style={styles.listWrap}
+          contentContainerStyle={styles.listContent}
+        >
+          {messages.map((msg) => (
             <View
-              key={message.id}
+              key={msg.id}
               style={[
-                styles.messageBubble,
-                isUser
-                  ? [styles.userBubble, { backgroundColor: theme.colors.primary }]
-                  : [styles.assistantBubble, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }],
+                styles.message,
+                msg.from === "user"
+                  ? { backgroundColor: theme.colors.primary }
+                  : {
+                      backgroundColor: theme.colors.surfaceMuted,
+                      borderColor: theme.colors.border,
+                      borderWidth: 1,
+                    },
+                msg.from === "user" ? styles.userBubble : styles.aiBubble,
               ]}
             >
-              <Text style={[styles.messageText, { color: isUser ? '#FFFFFF' : theme.colors.text }]}>{message.text}</Text>
+              <Text
+                style={[
+                  styles.messageText,
+                  { color: msg.from === "user" ? "#fff" : theme.colors.text },
+                ]}
+              >
+                {msg.text}
+              </Text>
             </View>
-          );
-        })}
-      </ScrollView>
+          ))}
+        </ScrollView>
 
-      <View style={[styles.composer, { backgroundColor: theme.colors.surface, borderTopColor: theme.colors.border }]}> 
-        <TextInput
-          style={[styles.input, { borderColor: theme.colors.border, backgroundColor: theme.colors.inputBg, color: theme.colors.text }]}
-          value={input}
-          onChangeText={setInput}
-          placeholder="Ask something..."
-          placeholderTextColor={theme.colors.textMuted}
-          multiline
-        />
-        <TouchableOpacity style={[styles.sendButton, { backgroundColor: theme.colors.primary }]} onPress={handleSend}>
-          <Text style={styles.sendButtonText}>Send</Text>
-        </TouchableOpacity>
+        <View
+          style={[styles.inputRow, { borderTopColor: theme.colors.border }]}
+        >
+          <TextInput
+            value={input}
+            onChangeText={setInput}
+            placeholder="Type your message..."
+            placeholderTextColor={theme.colors.textMuted}
+            style={[
+              styles.input,
+              {
+                color: theme.colors.text,
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.inputBg,
+              },
+            ]}
+          />
+
+          <Pressable
+            onPress={sendMessage}
+            disabled={!canSend}
+            style={[
+              styles.sendBtn,
+              {
+                backgroundColor: canSend
+                  ? theme.colors.primary
+                  : theme.colors.border,
+              },
+            ]}
+          >
+            <Text style={styles.sendBtnText}>Send</Text>
+          </Pressable>
+        </View>
       </View>
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  overlay: {
     flex: 1,
+    justifyContent: "flex-end",
+    backgroundColor: "rgba(0,0,0,0.22)",
+  },
+  backdrop: { ...StyleSheet.absoluteFillObject },
+  sheet: {
+    borderTopLeftRadius: 22,
+    borderTopRightRadius: 22,
+    borderWidth: 1,
+    height: "58%",
+    overflow: "hidden",
   },
   header: {
-    paddingTop: 56,
-    paddingBottom: 14,
-    paddingHorizontal: 16,
-    borderBottomWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  backText: {
-    fontSize: 15,
-    fontWeight: '700',
-  },
-  headerTitle: {
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  headerSpacer: {
-    width: 40,
-  },
-  messagesWrap: {
-    flex: 1,
-  },
-  messagesContent: {
-    padding: 16,
-    gap: 10,
-  },
-  messageBubble: {
-    maxWidth: '84%',
-    borderRadius: 18,
     paddingHorizontal: 14,
-    paddingVertical: 11,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
-  userBubble: {
-    alignSelf: 'flex-end',
-  },
-  assistantBubble: {
-    alignSelf: 'flex-start',
+  headerTitle: { fontSize: 16, fontWeight: "800" },
+  closeBtn: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
     borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  messageText: {
-    fontSize: 15,
-    lineHeight: 22,
+  listWrap: { flex: 1 },
+  listContent: { gap: 8, padding: 12 },
+  message: {
+    borderRadius: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    maxWidth: "88%",
   },
-  composer: {
-    borderTopWidth: 1,
-    padding: 12,
-    gap: 10,
-  },
+  userBubble: { alignSelf: "flex-end" },
+  aiBubble: { alignSelf: "flex-start" },
+  messageText: { fontSize: 13, lineHeight: 18 },
+  inputRow: { padding: 10, gap: 8, borderTopWidth: 1 },
   input: {
     borderWidth: 1,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    minHeight: 48,
-    maxHeight: 120,
-    fontSize: 15,
-    textAlignVertical: 'top',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
   },
-  sendButton: {
-    borderRadius: 14,
-    paddingVertical: 14,
-    alignItems: 'center',
-  },
-  sendButtonText: {
-    color: '#FFFFFF',
-    fontSize: 15,
-    fontWeight: '800',
-  },
+  sendBtn: { borderRadius: 10, paddingVertical: 10, alignItems: "center" },
+  sendBtnText: { color: "#fff", fontWeight: "800" },
 });

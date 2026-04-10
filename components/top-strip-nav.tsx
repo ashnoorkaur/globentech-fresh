@@ -3,9 +3,13 @@ import { router } from "expo-router";
 import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 type TopStripNavProps = {
-  onOpenMenu: () => void;
-  rightLabel?: string;
-  rightIcon?: "home-outline" | "person-circle-outline";
+  onOpenMenu?: () => void;
+  role?: string;
+  onProfilePress?: () => void;
+  leftMode?: "menu" | "back";
+  onLeftPress?: () => void;
+  hideBrand?: boolean;
+  rightMode?: "profile" | "home";
   onRightPress?: () => void;
   colors: {
     surface: string;
@@ -17,64 +21,131 @@ type TopStripNavProps = {
 
 export function TopStripNav({
   onOpenMenu,
-  rightLabel,
-  rightIcon = "home-outline",
+  role,
+  onProfilePress,
+  leftMode = "menu",
+  onLeftPress,
+  hideBrand = false,
+  rightMode = "profile",
   onRightPress,
   colors,
 }: TopStripNavProps) {
   return (
     <View
       style={[
-        styles.strip,
-        { backgroundColor: colors.surface, borderColor: colors.border },
+        styles.bar,
+        { backgroundColor: colors.surface, borderBottomColor: colors.border },
       ]}
     >
-      <TouchableOpacity style={styles.iconWrap} onPress={onOpenMenu}>
-        <Ionicons name="menu" size={25} color={colors.text} />
+      <TouchableOpacity
+        style={[
+          styles.sideBtn,
+          {
+            borderColor: colors.border,
+            backgroundColor: colors.surface,
+          },
+        ]}
+        onPress={onLeftPress ?? onOpenMenu}
+        activeOpacity={0.7}
+      >
+        <Ionicons
+          name={leftMode === "back" ? "arrow-back" : "menu-outline"}
+          size={24}
+          color={colors.primary}
+        />
       </TouchableOpacity>
 
-      <TouchableOpacity
-        style={[styles.rightButton, { borderColor: colors.border }]}
-        onPress={onRightPress ?? (() => router.push("/"))}
-      >
-        <Ionicons name={rightIcon} size={22} color={colors.primary} />
-        {rightLabel ? (
-          <Text style={[styles.rightText, { color: colors.primary }]}>
-            {rightLabel}
+      <View style={styles.centerWrap}>
+        {!hideBrand ? (
+          <Text style={[styles.brand, { color: colors.primary }]}>
+            GLOBENTECH
           </Text>
         ) : null}
-      </TouchableOpacity>
+      </View>
+
+      <View style={styles.rightWrap}>
+        <TouchableOpacity
+          style={styles.profileBtn}
+          onPress={
+            onRightPress ??
+            (rightMode === "home"
+              ? () => router.push("/admin-dashboard")
+              : (onProfilePress ?? (() => router.push("/profile"))))
+          }
+          activeOpacity={0.7}
+        >
+          <Ionicons
+            name={
+              rightMode === "home" ? "home-outline" : "person-circle-outline"
+            }
+            size={30}
+            color={colors.primary}
+          />
+          {rightMode === "profile" && role ? (
+            <Text style={[styles.roleLabel, { color: colors.primary }]}>
+              {role}
+            </Text>
+          ) : null}
+        </TouchableOpacity>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  strip: {
+  bar: {
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingHorizontal: 14,
-    paddingVertical: 10,
+    justifyContent: "space-between",
+    marginTop: 6,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
     borderBottomWidth: 1,
+    shadowColor: "#000",
+    shadowOpacity: 0.07,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 3 },
+    elevation: 4,
+    zIndex: 20,
   },
-  iconWrap: {
-    width: 44,
-    height: 44,
+  sideBtn: {
+    width: 40,
+    height: 40,
     borderRadius: 12,
+    borderWidth: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.06,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  centerWrap: {
+    flex: 1,
     alignItems: "center",
     justifyContent: "center",
   },
-  rightButton: {
-    minHeight: 44,
-    borderRadius: 12,
-    paddingHorizontal: 12,
+  brand: {
+    fontSize: 17,
+    fontWeight: "900",
+    letterSpacing: 3.5,
+  },
+  profileBtn: {
+    width: 54,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  rightWrap: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 6,
-    borderWidth: 1,
+    gap: 8,
   },
-  rightText: {
-    fontSize: 14,
-    fontWeight: "800",
+  roleLabel: {
+    fontSize: 9,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    textAlign: "center",
+    marginTop: 1,
   },
 });

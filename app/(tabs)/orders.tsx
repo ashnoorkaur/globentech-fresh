@@ -1,29 +1,5 @@
-import { ScrollView, StyleSheet, Text } from "react-native";
-import { ProjectFooter } from "../../components/project-footer";
-import { useAppTheme } from "../../lib/theme";
+import { Redirect } from "expo-router";
 
-export default function Orders() {
-  const theme = useAppTheme();
-
-  return (
-    <ScrollView
-      style={[styles.page, { backgroundColor: theme.colors.background }]}
-      contentContainerStyle={styles.content}
-    >
-      <Text style={[styles.title, { color: theme.colors.text }]}>
-        Order History
-      </Text>
-      <Text style={[styles.text, { color: theme.colors.textMuted }]}>
-        Orders page
-      </Text>
-      <ProjectFooter colors={theme.colors} />
-    </ScrollView>
-  );
+export default function OrdersTab() {
+  return <Redirect href="/customer-my-orders" />;
 }
-
-const styles = StyleSheet.create({
-  page: { flex: 1 },
-  content: { padding: 20, paddingBottom: 32 },
-  title: { fontSize: 28, fontWeight: "800", marginBottom: 8 },
-  text: { fontSize: 14 },
-});

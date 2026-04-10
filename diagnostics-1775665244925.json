@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-04-08T16:20:44.924Z",
+  "apiBase": "http://localhost/Capstone-project",
+  "serverStatus": "pass",
+  "endpoints": {
+    "login": {
+      "status": "pass",
+      "duration": 11,
+      "httpStatus": 200
+    },
+    "createOrder": {
+      "status": "pass",
+      "duration": 6,
+      "httpStatus": 405
+    },
+    "deactivateAccount": {
+      "status": "pass",
+      "duration": 8,
+      "httpStatus": 405
+    },
+    "contactForm": {
+      "status": "pass",
+      "duration": 6,
+      "httpStatus": 405
+    },
+    "adminQueue": {
+      "status": "pass",
+      "duration": 11,
+      "httpStatus": 401
+    }
+  },
+  "summary": {
+    "total": 5,
+    "passing": 5,
+    "warnings": 0,
+    "failures": 0
+  }
+}

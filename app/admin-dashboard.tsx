@@ -1,652 +1,210 @@
-import { Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { signOut } from "firebase/auth";
-import { get, ref } from "firebase/database";
-import { useEffect, useMemo, useState } from "react";
-import {
-    ActivityIndicator,
-    Modal,
-    Pressable,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
-} from "react-native";
-import { ProjectFooter } from "../components/project-footer";
-import { RoleMenuModal } from "../components/role-menu-modal";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
+import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
-import { auth, db } from "../firebase/config";
+import {
+    fetchAdminUsers,
+    fetchPendingOrders,
+    type AdminUserDto,
+    type PendingOrderDto,
+} from "../lib/admin-api";
+import { fetchCalendarData, type QueueEntry } from "../lib/calendar-api";
 import { useAppTheme } from "../lib/theme";
 
-type ChatMessage = {
-  id: string;
-  sender: "user" | "assistant";
-  text: string;
-};
-
-type AdminAction = {
-  title: string;
-  description: string;
-  meta: string;
-  button: string;
-  icon: keyof typeof MaterialCommunityIcons.glyphMap;
-  onPress: () => void;
-};
-
-const initialMessages: ChatMessage[] = [
-  {
-    id: "admin-welcome",
-    sender: "assistant",
-    text: "Admin assistant ready. Ask about approvals, users, equipment, reports, or system controls.",
-  },
-];
-
-const buildReply = (input: string) => {
-  const text = input.toLowerCase();
-
-  if (text.includes("approval")) {
-    return "You can review incoming approvals from the Approvals section and track pending requests from the dashboard cards.";
-  }
-
-  if (text.includes("user") || text.includes("permission")) {
-    return "Use User Management to update roles and permissions for customer and technician accounts.";
-  }
-
-  if (text.includes("equipment")) {
-    return "Equipment Management handles schedules, availability, and maintenance status updates.";
-  }
-
-  if (text.includes("report") || text.includes("analytics")) {
-    return "Open Reports to inspect system metrics, workloads, and operational performance.";
-  }
-
-  return "I can help with approvals, user administration, equipment setup, and report navigation.";
-};
-
-export default function AdminDashboard() {
+export default function AdminDashboardPage() {
   const theme = useAppTheme();
+  const [orders, setOrders] = useState<PendingOrderDto[]>([]);
+  const [queue, setQueue] = useState<QueueEntry[]>([]);
+  const [users, setUsers] = useState<AdminUserDto[]>([]);
   const [loading, setLoading] = useState(true);
-  const [name, setName] = useState("System Administrator");
-  const [menuVisible, setMenuVisible] = useState(false);
-  const [chatVisible, setChatVisible] = useState(false);
-  const [chatInput, setChatInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [lastUpdated, setLastUpdated] = useState("");
 
-  useEffect(() => {
-    const checkRole = async () => {
-      const user = auth.currentUser;
-
-      if (!user) {
-        router.replace("/login");
-        return;
-      }
-
-      try {
-        const snapshot = await get(ref(db, `users/${user.uid}`));
-        const userData = snapshot.val();
-
-        if (!userData) {
-          router.replace("/login");
-          return;
-        }
-
-        if (userData.role === "customer") {
-          router.replace("/customer-dashboard");
-          return;
-        }
-
-        if (userData.role === "technician") {
-          router.replace("/technician-dashboard");
-          return;
-        }
-
-        if (userData.role !== "admin") {
-          router.replace("/login");
-          return;
-        }
-
-        setName(userData.name || "System Administrator");
-        setLoading(false);
-      } catch {
-        router.replace("/login");
-      }
-    };
-
-    checkRole();
+  const loadLiveData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [pendingOrders, adminUsers, calendarData] = await Promise.all([
+        fetchPendingOrders(),
+        fetchAdminUsers(),
+        fetchCalendarData(),
+      ]);
+      setOrders(pendingOrders);
+      setUsers(adminUsers);
+      setQueue(calendarData.queue ?? []);
+      setLastUpdated(new Date().toLocaleTimeString());
+    } catch {
+      setOrders([]);
+      setUsers([]);
+      setQueue([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const handleLogout = async () => {
-    await signOut(auth);
-    router.replace("/login");
-  };
+  useEffect(() => {
+    loadLiveData();
+    const timer = setInterval(loadLiveData, 12000);
+    return () => clearInterval(timer);
+  }, [loadLiveData]);
 
-  const handleSend = () => {
-    const trimmed = chatInput.trim();
+  const stats = useMemo(() => {
+    const total = orders.length;
+    const high = orders.filter((o) => o.priority === "high").length;
+    const companies = new Set([
+      ...orders.map((o) => o.company_name || "Unknown"),
+      ...queue.map((q) => q.order_number || "Unknown"),
+    ]).size;
+    const usersCount = users.length;
+    const completed = queue.filter(
+      (q) => (q.order_status || "").toLowerCase() === "completed",
+    ).length;
+    return { total, high, companies, usersCount, completed };
+  }, [orders, users, queue]);
 
-    if (!trimmed) return;
-
-    const stamp = Date.now().toString();
-    setMessages((current) => [
-      ...current,
-      { id: `${stamp}-user`, sender: "user", text: trimmed },
-      {
-        id: `${stamp}-assistant`,
-        sender: "assistant",
-        text: buildReply(trimmed),
-      },
-    ]);
-    setChatInput("");
-  };
-
-  const actions = useMemo<AdminAction[]>(
-    () => [
-      {
-        title: "Pending Approvals",
-        description: "Orders waiting for approval",
-        meta: "0 Pending",
-        button: "Review Orders",
-        icon: "clipboard-check-outline",
-        onPress: () => undefined,
-      },
-      {
-        title: "User Management",
-        description: "Manage user accounts and permissions",
-        meta: "Manage Users",
-        button: "Manage Users",
-        icon: "account-group-outline",
-        onPress: () => router.push("/profile"),
-      },
-      {
-        title: "Equipment Management",
-        description: "Configure equipment settings and schedules",
-        meta: "Manage Equipment",
-        button: "Manage Equipment",
-        icon: "tools",
-        onPress: () => undefined,
-      },
-      {
-        title: "Reports & Analytics",
-        description: "View system statistics and performance",
-        meta: "View Reports",
-        button: "View Reports",
-        icon: "chart-box-outline",
-        onPress: () => undefined,
-      },
-    ],
-    [],
-  );
-
-  if (loading) {
-    return (
-      <View
-        style={[styles.loader, { backgroundColor: theme.colors.background }]}
-      >
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-      </View>
-    );
-  }
+  const cards = [
+    {
+      title: "Pending Approvals",
+      description: "Orders waiting for approval",
+      metricLabel: "Pending",
+      metricValue: String(stats.total),
+      route: "/admin-approvals" as const,
+      button: "Review Orders",
+      color: theme.colors.primary,
+    },
+    {
+      title: "User Management",
+      description: "Manage user accounts and permissions",
+      metricLabel: "Users",
+      metricValue: String(stats.usersCount),
+      route: "/admin-users" as const,
+      button: "Manage Users",
+      color: theme.colors.secondary,
+    },
+    {
+      title: "Equipment Management",
+      description: "Configure equipment settings and schedules",
+      metricLabel: "Companies",
+      metricValue: String(stats.companies),
+      route: "/admin-equipment" as const,
+      button: "Manage Equipment",
+      color: theme.colors.buttonStart,
+    },
+    {
+      title: "Reports & Analytics",
+      description: "View system statistics and performance",
+      metricLabel: "Completed",
+      metricValue: loading ? "Sync" : String(stats.completed),
+      route: "/admin-reports" as const,
+      button: "View Reports",
+      color: theme.colors.info,
+    },
+  ];
 
   return (
-    <SafeAreaView
-      style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
+    <RoleContentPage
+      title="Dashboard"
+      subtitle="Live operational overview with real-time order updates."
+      activeKey="dashboard"
+      menuItems={adminMenu}
+      dashboardRoute="/admin-dashboard"
+      role="Admin"
     >
       <View
         style={[
-          styles.bgBubbleTop,
-          { backgroundColor: theme.colors.primarySoft },
-        ]}
-      />
-      <View
-        style={[
-          styles.bgBubbleBottom,
-          { backgroundColor: theme.colors.primarySoft },
-        ]}
-      />
-
-      <View
-        style={[
-          styles.headerRow,
+          styles.card,
           {
             backgroundColor: theme.colors.surface,
-            borderBottomColor: theme.colors.border,
+            borderColor: theme.colors.border,
           },
         ]}
       >
-        <TouchableOpacity
-          style={styles.iconButton}
-          onPress={() => setMenuVisible(true)}
-        >
-          <Ionicons name="menu" size={26} color={theme.colors.text} />
-        </TouchableOpacity>
-
-        <TouchableOpacity
-          style={styles.profileBadge}
-          onPress={() => router.push("/settings")}
-        >
-          <Ionicons
-            name="person-circle-outline"
-            size={26}
-            color={theme.colors.primary}
-          />
-          <Text
-            style={[styles.profileBadgeText, { color: theme.colors.primary }]}
-          >
-            System Administrator
-          </Text>
-        </TouchableOpacity>
-      </View>
-
-      <ScrollView
-        style={styles.container}
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
         <View
           style={[
-            styles.heroCard,
+            styles.liveBanner,
             {
-              backgroundColor: theme.colors.surface,
               borderColor: theme.colors.border,
+              backgroundColor: theme.colors.surfaceMuted,
             },
           ]}
         >
-          <Text style={[styles.heroBrand, { color: theme.colors.primary }]}>
-            GlobenTech
-          </Text>
-          <Text style={[styles.heroTitle, { color: theme.colors.text }]}>
-            Dashboard
+          <Text style={[styles.liveBannerTitle, { color: theme.colors.text }]}>
+            Operations Snapshot
           </Text>
           <Text
-            style={[styles.heroSubtitle, { color: theme.colors.textMuted }]}
+            style={[styles.liveBannerSub, { color: theme.colors.textMuted }]}
           >
-            Welcome, {name}!
+            Updated {lastUpdated || "--"} · {loading ? "Syncing" : "Live"}
           </Text>
         </View>
 
-        {actions.map((item) => (
+        {cards.map((card) => (
           <View
-            key={item.title}
+            key={card.title}
             style={[
-              styles.card,
+              styles.featureCard,
               {
-                backgroundColor: theme.colors.surface,
                 borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surfaceMuted,
               },
             ]}
           >
-            <View style={styles.cardTopRow}>
-              <View
-                style={[
-                  styles.cardIconWrap,
-                  { backgroundColor: theme.colors.primarySoft },
-                ]}
-              >
-                <MaterialCommunityIcons
-                  name={item.icon}
-                  size={20}
-                  color={theme.colors.primary}
-                />
-              </View>
-              <Text style={[styles.cardMeta, { color: theme.colors.primary }]}>
-                {item.meta}
-              </Text>
-            </View>
-
-            <Text style={[styles.cardTitle, { color: theme.colors.text }]}>
-              {item.title}
+            <Text style={[styles.featureTitle, { color: theme.colors.text }]}>
+              {card.title}
             </Text>
             <Text
-              style={[
-                styles.cardDescription,
-                { color: theme.colors.textMuted },
-              ]}
+              style={[styles.featureDesc, { color: theme.colors.textMuted }]}
             >
-              {item.description}
+              {card.description}
             </Text>
-
-            <GradientButton style={styles.cardButton} onPress={item.onPress}>
-              <Text style={styles.cardButtonText}>{item.button}</Text>
+            <View style={styles.featureStatRow}>
+              <Text
+                style={[
+                  styles.featureStatLabel,
+                  { color: theme.colors.textMuted },
+                ]}
+              >
+                {card.metricLabel}
+              </Text>
+              <Text style={[styles.featureStatValue, { color: card.color }]}>
+                {card.metricValue}
+              </Text>
+            </View>
+            <GradientButton
+              style={styles.featureBtn}
+              onPress={() => router.push(card.route)}
+              colors={["#4F7CFF", "#8C5BEA"]}
+              compact
+            >
+              <Text style={styles.featureBtnText}>{card.button}</Text>
             </GradientButton>
           </View>
         ))}
-
-        <View
-          style={[
-            styles.systemCard,
-            {
-              backgroundColor: theme.colors.surface,
-              borderColor: theme.colors.border,
-            },
-          ]}
-        >
-          <Text style={[styles.systemTitle, { color: theme.colors.text }]}>
-            Pending Orders
-          </Text>
-          <Text style={[styles.systemLine, { color: theme.colors.textMuted }]}>
-            No pending orders
-          </Text>
-          <Text
-            style={[
-              styles.systemTitle,
-              { color: theme.colors.text, marginTop: 12 },
-            ]}
-          >
-            System Information
-          </Text>
-          <Text style={[styles.systemLine, { color: theme.colors.textMuted }]}>
-            Project: Phase 3 Prototype
-          </Text>
-          <Text style={[styles.systemLine, { color: theme.colors.textMuted }]}>
-            Status: Development
-          </Text>
-          <Text style={[styles.systemNote, { color: theme.colors.textMuted }]}>
-            Note: This is a school project prototype demonstrating core
-            functionality.
-          </Text>
-        </View>
-
-        <ProjectFooter colors={theme.colors} />
-      </ScrollView>
-
-      <TouchableOpacity
-        style={[styles.fab, { backgroundColor: theme.colors.primary }]}
-        onPress={() => setChatVisible(true)}
-      >
-        <Ionicons name="sparkles-outline" size={24} color="#FFFFFF" />
-      </TouchableOpacity>
-
-      <RoleMenuModal
-        visible={menuVisible}
-        onClose={() => setMenuVisible(false)}
-        items={adminMenu}
-        activeKey="dashboard"
-        colors={theme.colors}
-        onLogout={handleLogout}
-      />
-
-      <Modal
-        transparent
-        animationType="slide"
-        visible={chatVisible}
-        onRequestClose={() => setChatVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => setChatVisible(false)}
-          />
-          <View
-            style={[
-              styles.chatSheet,
-              {
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.border,
-              },
-            ]}
-          >
-            <View style={styles.chatHeader}>
-              <View>
-                <Text style={[styles.chatTitle, { color: theme.colors.text }]}>
-                  AI Assistant
-                </Text>
-                <Text
-                  style={[
-                    styles.chatSubtitle,
-                    { color: theme.colors.textMuted },
-                  ]}
-                >
-                  Admin support chat
-                </Text>
-              </View>
-              <TouchableOpacity onPress={() => setChatVisible(false)}>
-                <Ionicons name="close" size={24} color={theme.colors.text} />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              style={styles.chatMessages}
-              showsVerticalScrollIndicator={false}
-            >
-              {messages.map((message) => {
-                const isUser = message.sender === "user";
-
-                return (
-                  <View
-                    key={message.id}
-                    style={[
-                      styles.messageBubble,
-                      isUser
-                        ? [
-                            styles.userBubble,
-                            { backgroundColor: theme.colors.primary },
-                          ]
-                        : [
-                            styles.assistantBubble,
-                            {
-                              backgroundColor: theme.colors.inputBg,
-                              borderColor: theme.colors.border,
-                            },
-                          ],
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.messageText,
-                        { color: isUser ? "#FFFFFF" : theme.colors.text },
-                      ]}
-                    >
-                      {message.text}
-                    </Text>
-                  </View>
-                );
-              })}
-            </ScrollView>
-
-            <View style={styles.chatComposer}>
-              <TextInput
-                style={[
-                  styles.chatInput,
-                  {
-                    backgroundColor: theme.colors.inputBg,
-                    borderColor: theme.colors.border,
-                    color: theme.colors.text,
-                  },
-                ]}
-                value={chatInput}
-                onChangeText={setChatInput}
-                placeholder="Ask about approvals, users, or reports..."
-                placeholderTextColor={theme.colors.textMuted}
-                multiline
-              />
-              <TouchableOpacity
-                style={[
-                  styles.sendButton,
-                  { backgroundColor: theme.colors.primary },
-                ]}
-                onPress={handleSend}
-              >
-                <Text style={styles.sendButtonText}>Send</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </SafeAreaView>
+      </View>
+    </RoleContentPage>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: { flex: 1 },
-  container: { flex: 1 },
-  content: { padding: 20, paddingBottom: 120 },
-  loader: { flex: 1, justifyContent: "center", alignItems: "center" },
-  bgBubbleTop: {
-    position: "absolute",
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    right: -70,
-    top: -95,
-    opacity: 0.45,
-  },
-  bgBubbleBottom: {
-    position: "absolute",
-    width: 230,
-    height: 230,
-    borderRadius: 115,
-    left: -80,
-    bottom: -110,
-    opacity: 0.35,
-  },
-  headerRow: {
+  card: { borderWidth: 1, borderRadius: 20, padding: 16, gap: 10 },
+  liveBanner: { borderWidth: 1, borderRadius: 12, padding: 10, gap: 3 },
+  liveBannerTitle: { fontSize: 14, fontWeight: "800" },
+  liveBannerSub: { fontSize: 12, fontWeight: "700" },
+  featureCard: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 6 },
+  featureTitle: { fontSize: 15, fontWeight: "800" },
+  featureDesc: { fontSize: 12 },
+  featureStatRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    borderBottomWidth: 1,
-    paddingHorizontal: 20,
-    paddingVertical: 10,
   },
-  iconButton: {
-    width: 40,
-    height: 40,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  profileBadge: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-    paddingHorizontal: 2,
-    paddingVertical: 4,
-  },
-  profileBadgeText: { fontSize: 15, fontWeight: "800" },
-  heroCard: {
-    borderWidth: 1,
-    borderRadius: 26,
-    padding: 22,
-    marginBottom: 16,
-    shadowColor: "#1E3A8A",
-    shadowOpacity: 0.1,
-    shadowRadius: 14,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 4,
-  },
-  heroBrand: {
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 1,
-    marginBottom: 10,
-    textTransform: "uppercase",
-  },
-  heroTitle: { fontSize: 30, fontWeight: "800", marginBottom: 6 },
-  heroSubtitle: { fontSize: 16, lineHeight: 22 },
-  card: {
-    borderWidth: 1,
-    borderRadius: 22,
-    padding: 18,
-    marginBottom: 14,
-    shadowColor: "#1E3A8A",
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
-  },
-  cardTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  cardIconWrap: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  cardMeta: { fontSize: 12, fontWeight: "700" },
-  cardTitle: { fontSize: 20, fontWeight: "800", marginBottom: 6 },
-  cardDescription: { fontSize: 14, lineHeight: 21, marginBottom: 16 },
-  cardButton: { borderRadius: 14, overflow: "hidden" },
-  cardButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
-  systemCard: {
-    borderWidth: 1,
-    borderRadius: 22,
-    padding: 18,
+  featureStatLabel: { fontSize: 12, fontWeight: "700" },
+  featureStatValue: { fontSize: 18, fontWeight: "800" },
+  featureBtn: {
     marginTop: 2,
-    shadowColor: "#1E3A8A",
-    shadowOpacity: 0.08,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 2,
+    borderRadius: 10,
+    alignSelf: "flex-start",
+    minWidth: 140,
   },
-  systemTitle: { fontSize: 18, fontWeight: "800", marginBottom: 8 },
-  systemLine: { fontSize: 13, lineHeight: 20, marginBottom: 4 },
-  systemNote: { fontSize: 13, lineHeight: 20, marginTop: 8 },
-  fab: {
-    position: "absolute",
-    right: 22,
-    bottom: 26,
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    alignItems: "center",
-    justifyContent: "center",
-    shadowColor: "#1E3A8A",
-    shadowOpacity: 0.26,
-    shadowRadius: 16,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 8,
-  },
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.4)",
-    justifyContent: "flex-end",
-  },
-  chatSheet: {
-    minHeight: "62%",
-    maxHeight: "78%",
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    borderWidth: 1,
-    paddingTop: 18,
-    paddingHorizontal: 18,
-    paddingBottom: 18,
-  },
-  chatHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 14,
-  },
-  chatTitle: { fontSize: 19, fontWeight: "800" },
-  chatSubtitle: { fontSize: 13, marginTop: 2 },
-  chatMessages: { flexGrow: 0, marginBottom: 14 },
-  messageBubble: {
-    maxWidth: "84%",
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    borderRadius: 18,
-    marginBottom: 10,
-  },
-  userBubble: { alignSelf: "flex-end" },
-  assistantBubble: { alignSelf: "flex-start", borderWidth: 1 },
-  messageText: { fontSize: 14, lineHeight: 20 },
-  chatComposer: { gap: 10 },
-  chatInput: {
-    borderWidth: 1,
-    borderRadius: 16,
-    minHeight: 52,
-    maxHeight: 110,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    fontSize: 14,
-    textAlignVertical: "top",
-  },
-  sendButton: { borderRadius: 14, paddingVertical: 14, alignItems: "center" },
-  sendButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "800" },
+  featureBtnText: { color: "#fff", fontWeight: "800", fontSize: 12 },
 });

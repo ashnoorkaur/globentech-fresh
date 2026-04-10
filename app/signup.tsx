@@ -1,554 +1,448 @@
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { createUserWithEmailAndPassword } from "firebase/auth";
-import { ref, set } from "firebase/database";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import {
-    ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
-    SafeAreaView,
+    Pressable,
     ScrollView,
     StyleSheet,
     Text,
     TextInput,
-    TouchableOpacity,
     View,
 } from "react-native";
-import { FeedbackModal } from "../components/ui/feedback-modal";
-import { auth, db } from "../firebase/config";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useFeedbackModal } from "../hooks/use-feedback-modal";
+import { registerAccount } from "../lib/auth-api";
 import { useAppTheme } from "../lib/theme";
 
-type ModalState = {
-  visible: boolean;
-  title: string;
-  message: string;
-  variant: "info" | "success" | "error";
-  onConfirm?: () => void;
-};
-
-export default function SignUpScreen() {
+export default function SignupPage() {
   const theme = useAppTheme();
-  const [name, setName] = useState("");
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [company, setCompany] = useState("");
+  const [companyName, setCompanyName] = useState("");
   const [address, setAddress] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [modal, setModal] = useState<ModalState>({
-    visible: false,
-    title: "",
-    message: "",
-    variant: "info",
-  });
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const feedback = useFeedbackModal();
 
-  const showModal = (
-    title: string,
-    message: string,
-    variant: "info" | "success" | "error" = "info",
-    onConfirm?: () => void,
-  ) => {
-    setModal({ visible: true, title, message, variant, onConfirm });
+  const offensiveWords = useMemo(
+    () => [
+      "fuck",
+      "fucking",
+      "shit",
+      "bitch",
+      "bastard",
+      "cunt",
+      "dick",
+      "pussy",
+      "nigger",
+      "nigga",
+      "faggot",
+      "fag",
+      "retard",
+      "whore",
+      "slut",
+      "piss",
+      "cock",
+      "asshole",
+      "motherfucker",
+      "wanker",
+      "twat",
+      "prick",
+    ],
+    [],
+  );
+
+  const hasOffensive = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return false;
+    return offensiveWords.some((word) =>
+      new RegExp(`\\b${word}\\b`, "i").test(normalized),
+    );
   };
 
-  const isValidEmail = (value: string) =>
-    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-
-  const handleSignUp = async () => {
-    if (!name.trim()) {
-      showModal("Required Field", "Full name is required.", "error");
-      return;
+  const validate = () => {
+    if (!fullName.trim() || !email.trim() || !password) {
+      return "Please fill in all required fields";
     }
-    if (!/^[A-Za-z\s]+$/.test(name.trim())) {
-      showModal("Invalid Name", "Name should contain only letters.", "error");
-      return;
+    if (fullName.trim().length > 20) {
+      return "Full name must be 20 characters or less";
     }
-    if (name.trim().length > 20) {
-      showModal("Invalid Name", "Name cannot exceed 20 characters.", "error");
-      return;
+    if (email.trim().length > 30) {
+      return "Email address must be 30 characters or less";
     }
-
-    if (!email.trim()) {
-      showModal("Required Field", "Email address is required.", "error");
-      return;
+    if (!/^\S+@\S+\.\S+$/.test(email.trim())) {
+      return "Please enter a valid email address (must contain @)";
     }
-    if (!isValidEmail(email.trim())) {
-      showModal(
-        "Invalid Email",
-        "Please enter a valid email address containing @.",
-        "error",
-      );
-      return;
+    if (phone.trim() && !/^[0-9]{1,15}$/.test(phone.trim())) {
+      return "Phone number must contain digits only (max 15)";
     }
-
-    if (phone.trim() && !/^\d+$/.test(phone.trim())) {
-      showModal(
-        "Invalid Phone",
-        "Phone number must contain digits only.",
-        "error",
-      );
-      return;
+    if (companyName.trim() && companyName.trim().length > 35) {
+      return "Company name must be 35 characters or less";
     }
-
-    if (!password) {
-      showModal("Required Field", "Password is required.", "error");
-      return;
+    if (address.trim() && address.trim().length > 45) {
+      return "Address must be 45 characters or less";
     }
-    if (password.length < 6 || password.length > 35) {
-      showModal(
-        "Invalid Password",
-        "Password must be between 6 and 35 characters.",
-        "error",
-      );
-      return;
-    }
-
     if (password !== confirmPassword) {
-      showModal("Password Mismatch", "Passwords do not match.", "error");
+      return "Passwords do not match";
+    }
+    if (password.length < 6) {
+      return "Password must be at least 6 characters long";
+    }
+    if (password.length > 35) {
+      return "Password must be 35 characters or less";
+    }
+    if (
+      hasOffensive(fullName) ||
+      hasOffensive(companyName) ||
+      hasOffensive(address)
+    ) {
+      return "Offensive or inappropriate language is not allowed";
+    }
+    return "";
+  };
+
+  const submit = async () => {
+    const error = validate();
+    if (error) {
+      feedback.showInfo("Please Check Your Details", error);
       return;
     }
 
-    setLoading(true);
-
+    setSubmitting(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(
-        auth,
-        email.trim(),
+      await registerAccount({
+        full_name: fullName.trim(),
+        email: email.trim(),
         password,
-      );
-
-      const user = userCredential.user;
-
-      await set(ref(db, `users/${user.uid}`), {
-        uid: user.uid,
-        name: name.trim(),
-        email: user.email,
+        confirm_password: confirmPassword,
         phone: phone.trim(),
-        company: company.trim(),
+        company_name: companyName.trim(),
         address: address.trim(),
-        role: "customer",
-        createdAt: new Date().toISOString(),
       });
 
-      showModal(
+      feedback.showSuccess(
         "Account Created",
-        "Your account was created successfully.",
-        "success",
-        () => {
-          router.replace("/login");
-        },
+        "Your account is ready. You can log in now.",
       );
-    } catch (error: any) {
-      if (error.code === "auth/email-already-in-use") {
-        showModal("Sign Up Failed", "This email is already in use.", "error");
-      } else if (error.code === "auth/invalid-email") {
-        showModal(
-          "Sign Up Failed",
-          "Please enter a valid email address.",
-          "error",
-        );
-      } else {
-        showModal("Sign Up Failed", error.message, "error");
-      }
+      router.replace("/login");
+    } catch (error) {
+      feedback.showError(
+        "Registration failed",
+        error instanceof Error
+          ? error.message
+          : "We could not complete your registration. Please try again.",
+      );
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
   return (
     <SafeAreaView
-      style={[styles.safeArea, { backgroundColor: theme.colors.background }]}
+      style={[styles.page, { backgroundColor: theme.colors.background }]}
     >
       <View
         style={[
-          styles.bgBubbleTop,
-          { backgroundColor: theme.colors.primarySoft },
+          styles.bgBlobTop,
+          { backgroundColor: theme.colors.backgroundDesignA },
         ]}
       />
       <View
         style={[
-          styles.bgBubbleBottom,
-          { backgroundColor: theme.colors.primarySoft },
+          styles.bgBlobBottom,
+          { backgroundColor: theme.colors.backgroundDesignB },
         ]}
       />
 
-      <KeyboardAvoidingView
-        style={styles.keyboardView}
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
       >
-        <ScrollView
-          contentContainerStyle={styles.scrollContent}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border,
+            },
+          ]}
         >
+          <Text style={[styles.brand, { color: theme.colors.primary }]}>
+            GlobenTech
+          </Text>
+          <Text style={[styles.heading, { color: theme.colors.text }]}>
+            Create Account
+          </Text>
+          <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
+            Create your account and continue to login.
+          </Text>
+
           <View
             style={[
-              styles.card,
+              styles.section,
               {
-                backgroundColor: theme.colors.surface,
                 borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surfaceMuted,
               },
             ]}
           >
-            <Text
-              style={[
-                styles.badge,
-                {
-                  color: theme.colors.primary,
-                  backgroundColor: theme.colors.primarySoft,
-                },
-              ]}
-            >
-              CREATE ACCOUNT
+            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+              Basic Information
             </Text>
-            <Text style={[styles.title, { color: theme.colors.primary }]}>
-              Join GlobenTech
-            </Text>
-            <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
-              Create your profile and start booking services.
-            </Text>
-
-            <View style={styles.labelRow}>
-              <Text style={[styles.label, { color: theme.colors.text }]}>
-                Full Name
-              </Text>
-              <Text style={styles.required}> *</Text>
-            </View>
             <TextInput
+              value={fullName}
+              onChangeText={setFullName}
+              placeholder="Full Name* (max 20)"
+              placeholderTextColor={theme.colors.textMuted}
               style={[
                 styles.input,
                 {
+                  color: theme.colors.text,
                   borderColor: theme.colors.border,
                   backgroundColor: theme.colors.inputBg,
-                  color: theme.colors.text,
                 },
               ]}
-              placeholder="Enter your full name (max 20 chars)"
-              placeholderTextColor="#94A3B8"
-              value={name}
-              onChangeText={(text) => {
-                if (text.length <= 20) setName(text);
-              }}
-              editable={!loading}
+              maxLength={20}
             />
-
-            <View style={styles.labelRow}>
-              <Text style={[styles.label, { color: theme.colors.text }]}>
-                Email Address
-              </Text>
-              <Text style={styles.required}> *</Text>
-            </View>
             <TextInput
-              style={[
-                styles.input,
-                {
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
-                  color: theme.colors.text,
-                },
-              ]}
-              placeholder="Enter your email (must contain @)"
-              placeholderTextColor="#94A3B8"
               value={email}
-              onChangeText={(text) => {
-                if (text.length <= 60) setEmail(text);
-              }}
-              autoCapitalize="none"
-              autoCorrect={false}
+              onChangeText={setEmail}
+              placeholder="Email* (max 30)"
+              placeholderTextColor={theme.colors.textMuted}
+              style={[
+                styles.input,
+                {
+                  color: theme.colors.text,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                },
+              ]}
               keyboardType="email-address"
-              editable={!loading}
+              autoCapitalize="none"
+              maxLength={30}
             />
-
-            <View style={styles.labelRow}>
-              <Text style={[styles.label, { color: theme.colors.text }]}>
-                Phone Number
-              </Text>
-              <Text style={styles.optional}> (optional)</Text>
-            </View>
             <TextInput
-              style={[
-                styles.input,
-                {
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
-                  color: theme.colors.text,
-                },
-              ]}
-              placeholder="Digits only, max 15"
-              placeholderTextColor="#94A3B8"
               value={phone}
-              onChangeText={(text) => {
-                const digits = text.replace(/[^\d]/g, "");
-                if (digits.length <= 15) setPhone(digits);
-              }}
-              keyboardType="phone-pad"
-              editable={!loading}
-            />
-
-            <View style={styles.labelRow}>
-              <Text style={[styles.label, { color: theme.colors.text }]}>
-                Company Name
-              </Text>
-              <Text style={styles.optional}> (optional)</Text>
-            </View>
-            <TextInput
+              onChangeText={setPhone}
+              placeholder="Phone (digits only, max 15)"
+              placeholderTextColor={theme.colors.textMuted}
               style={[
                 styles.input,
                 {
+                  color: theme.colors.text,
                   borderColor: theme.colors.border,
                   backgroundColor: theme.colors.inputBg,
-                  color: theme.colors.text,
                 },
               ]}
-              placeholder="Enter your company name (max 35 chars)"
-              placeholderTextColor="#94A3B8"
-              value={company}
-              onChangeText={(text) => {
-                if (text.length <= 35) setCompany(text);
-              }}
-              editable={!loading}
+              keyboardType="number-pad"
+              maxLength={15}
             />
-
-            <View style={styles.labelRow}>
-              <Text style={[styles.label, { color: theme.colors.text }]}>
-                Address
-              </Text>
-              <Text style={styles.optional}> (optional)</Text>
-            </View>
             <TextInput
+              value={companyName}
+              onChangeText={setCompanyName}
+              placeholder="Company Name (max 35)"
+              placeholderTextColor={theme.colors.textMuted}
               style={[
                 styles.input,
                 {
+                  color: theme.colors.text,
                   borderColor: theme.colors.border,
                   backgroundColor: theme.colors.inputBg,
-                  color: theme.colors.text,
                 },
               ]}
-              placeholder="Enter your address (max 45 chars)"
-              placeholderTextColor="#94A3B8"
+              maxLength={35}
+            />
+            <TextInput
               value={address}
-              onChangeText={(text) => {
-                if (text.length <= 45) setAddress(text);
-              }}
-              editable={!loading}
-            />
-
-            <View style={styles.labelRow}>
-              <Text style={[styles.label, { color: theme.colors.text }]}>
-                Password
-              </Text>
-              <Text style={styles.required}> *</Text>
-            </View>
-            <TextInput
+              onChangeText={setAddress}
+              placeholder="Address (max 45)"
+              placeholderTextColor={theme.colors.textMuted}
               style={[
                 styles.input,
+                styles.textarea,
                 {
+                  color: theme.colors.text,
                   borderColor: theme.colors.border,
                   backgroundColor: theme.colors.inputBg,
-                  color: theme.colors.text,
                 },
               ]}
-              placeholder="Enter password (6–35 characters)"
-              placeholderTextColor="#94A3B8"
-              value={password}
-              onChangeText={(text) => {
-                if (text.length <= 35) setPassword(text);
-              }}
-              secureTextEntry
-              editable={!loading}
+              maxLength={45}
+              multiline
             />
-
-            <View style={styles.labelRow}>
-              <Text style={[styles.label, { color: theme.colors.text }]}>
-                Confirm Password
-              </Text>
-              <Text style={styles.required}> *</Text>
-            </View>
-            <TextInput
-              style={[
-                styles.input,
-                {
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
-                  color: theme.colors.text,
-                },
-              ]}
-              placeholder="Re-enter your password"
-              placeholderTextColor="#94A3B8"
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              secureTextEntry
-              editable={!loading}
-            />
-
-            <TouchableOpacity
-              style={[
-                styles.button,
-                { backgroundColor: theme.colors.primary },
-                loading && styles.buttonDisabled,
-              ]}
-              onPress={handleSignUp}
-              disabled={loading}
-            >
-              {loading ? (
-                <ActivityIndicator color="#FFFFFF" />
-              ) : (
-                <Text style={styles.buttonText}>Create Account</Text>
-              )}
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              onPress={() => router.replace("/login")}
-              disabled={loading}
-            >
-              <Text style={[styles.link, { color: theme.colors.primary }]}>
-                Already have an account? Login
-              </Text>
-            </TouchableOpacity>
           </View>
-        </ScrollView>
-      </KeyboardAvoidingView>
 
-      <FeedbackModal
-        visible={modal.visible}
-        title={modal.title}
-        message={modal.message}
-        variant={modal.variant}
-        onConfirm={() => {
-          const callback = modal.onConfirm;
-          setModal((prev) => ({
-            ...prev,
-            visible: false,
-            onConfirm: undefined,
-          }));
-          callback?.();
-        }}
-      />
+          <View
+            style={[
+              styles.section,
+              {
+                borderColor: theme.colors.border,
+                backgroundColor: theme.colors.surfaceMuted,
+              },
+            ]}
+          >
+            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+              Security
+            </Text>
+
+            <View
+              style={[
+                styles.passwordWrap,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                },
+              ]}
+            >
+              <TextInput
+                value={password}
+                onChangeText={setPassword}
+                placeholder="Password* (6-35)"
+                placeholderTextColor={theme.colors.textMuted}
+                style={[styles.passwordInput, { color: theme.colors.text }]}
+                secureTextEntry={!showPassword}
+                maxLength={35}
+              />
+              <Pressable
+                onPress={() => setShowPassword((v) => !v)}
+                style={styles.eyeBtn}
+              >
+                <Ionicons
+                  name={showPassword ? "eye-off-outline" : "eye-outline"}
+                  size={18}
+                  color={theme.colors.textMuted}
+                />
+              </Pressable>
+            </View>
+
+            <View
+              style={[
+                styles.passwordWrap,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                },
+              ]}
+            >
+              <TextInput
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                placeholder="Confirm Password*"
+                placeholderTextColor={theme.colors.textMuted}
+                style={[styles.passwordInput, { color: theme.colors.text }]}
+                secureTextEntry={!showConfirmPassword}
+                maxLength={35}
+              />
+              <Pressable
+                onPress={() => setShowConfirmPassword((v) => !v)}
+                style={styles.eyeBtn}
+              >
+                <Ionicons
+                  name={showConfirmPassword ? "eye-off-outline" : "eye-outline"}
+                  size={18}
+                  color={theme.colors.textMuted}
+                />
+              </Pressable>
+            </View>
+
+            <Text style={[styles.hint, { color: theme.colors.textMuted }]}>
+              Passwords must match and be 6-35 characters.
+            </Text>
+          </View>
+
+          <Pressable
+            style={[
+              styles.registerBtn,
+              { backgroundColor: theme.colors.primary },
+            ]}
+            onPress={submit}
+          >
+            <Text style={styles.registerBtnText}>
+              {submitting ? "Registering..." : "Register"}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => router.replace("/login")}
+            style={styles.linkWrap}
+          >
+            <Text style={[styles.linkText, { color: theme.colors.secondary }]}>
+              Already have an account? Login here
+            </Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+      {feedback.modal}
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
-    flex: 1,
-    backgroundColor: "#E8EFFA",
-  },
-  keyboardView: {
-    flex: 1,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    padding: 20,
-    paddingVertical: 28,
-  },
-  bgBubbleTop: {
+  page: { flex: 1 },
+  bgBlobTop: {
     position: "absolute",
+    width: 260,
+    height: 260,
+    borderRadius: 130,
+    right: -95,
     top: -90,
-    right: -60,
-    width: 240,
-    height: 240,
-    borderRadius: 120,
-    backgroundColor: "#C7D8F7",
-    opacity: 0.45,
+    opacity: 0.44,
   },
-  bgBubbleBottom: {
+  bgBlobBottom: {
     position: "absolute",
-    bottom: -100,
-    left: -70,
-    width: 250,
-    height: 250,
-    borderRadius: 125,
-    backgroundColor: "#BFD2F5",
-    opacity: 0.35,
+    width: 290,
+    height: 290,
+    borderRadius: 145,
+    left: -120,
+    bottom: -120,
+    opacity: 0.38,
   },
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 24,
-    padding: 24,
-    borderWidth: 1,
-    borderColor: "#D5E2F8",
-    shadowColor: "#1E3A8A",
-    shadowOpacity: 0.12,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 10 },
-    elevation: 6,
-  },
-  badge: {
-    alignSelf: "flex-start",
-    color: "#3159A9",
-    backgroundColor: "#E9F0FF",
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: 999,
-    fontSize: 11,
-    fontWeight: "700",
-    letterSpacing: 0.8,
-    marginBottom: 14,
-  },
-  title: {
-    fontSize: 30,
-    fontWeight: "800",
-    color: "#1E3A8A",
-    marginBottom: 4,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#64748B",
-    lineHeight: 21,
-    marginBottom: 20,
-  },
-  labelRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 8,
-  },
-  label: {
-    color: "#334155",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  required: {
-    color: "#B42318",
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  optional: {
-    color: "#94A3B8",
+  scrollContent: { padding: 20, paddingTop: 32, paddingBottom: 32 },
+  card: { borderWidth: 1, borderRadius: 20, padding: 16, gap: 10 },
+  brand: {
     fontSize: 12,
-    fontWeight: "500",
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 1,
   },
+  heading: { fontSize: 24, fontWeight: "800" },
+  copy: { fontSize: 14, lineHeight: 20, marginBottom: 6 },
+  section: { borderWidth: 1, borderRadius: 14, padding: 10, gap: 8 },
+  sectionTitle: { fontSize: 13, fontWeight: "800", letterSpacing: 0.3 },
   input: {
     borderWidth: 1,
-    borderColor: "#CBD8EF",
-    backgroundColor: "#F8FAFD",
     borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 13,
-    fontSize: 15,
-    color: "#0F172A",
-    marginBottom: 14,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
   },
-  button: {
-    backgroundColor: "#1E3A8A",
+  textarea: { minHeight: 70, textAlignVertical: "top" },
+  passwordWrap: {
+    borderWidth: 1,
     borderRadius: 12,
-    paddingVertical: 15,
+    minHeight: 44,
+    flexDirection: "row",
     alignItems: "center",
-    marginTop: 8,
+    paddingLeft: 12,
   },
-  buttonDisabled: {
-    opacity: 0.7,
+  passwordInput: { flex: 1, fontSize: 14, paddingVertical: 10 },
+  eyeBtn: {
+    width: 42,
+    height: 42,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  buttonText: {
-    color: "#FFFFFF",
-    fontSize: 15,
-    fontWeight: "800",
-    letterSpacing: 0.4,
+  hint: { fontSize: 11, fontWeight: "700", marginTop: -2 },
+  registerBtn: {
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+    marginTop: 2,
   },
-  link: {
-    textAlign: "center",
-    marginTop: 18,
-    color: "#23408E",
-    fontWeight: "600",
-  },
+  registerBtnText: { color: "#fff", fontWeight: "800", fontSize: 14 },
+  linkWrap: { alignItems: "center", paddingVertical: 4 },
+  linkText: { fontSize: 13, fontWeight: "700" },
 });

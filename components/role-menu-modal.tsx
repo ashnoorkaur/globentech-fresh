@@ -1,15 +1,44 @@
 import { Ionicons } from "@expo/vector-icons";
+import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
+import { useEffect, useRef } from "react";
 import {
-  Modal,
-  Pressable,
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
+    Animated,
+    Dimensions,
+    Modal,
+    Pressable,
+    SafeAreaView,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { MenuItem } from "../constants/role-menus";
+
+const PANEL_WIDTH = Dimensions.get("window").width * 0.78;
+
+const ICON_MAP: Record<string, string> = {
+  home: "home-outline",
+  login: "log-in-outline",
+  signup: "person-add-outline",
+  dashboard: "grid-outline",
+  "my-orders": "receipt-outline",
+  "order-history": "time-outline",
+  "new-order": "add-circle-outline",
+  "contact-us": "chatbubble-ellipses-outline",
+  approvals: "checkmark-circle-outline",
+  calendar: "calendar-outline",
+  users: "people-outline",
+  equipment: "construct-outline",
+  reports: "bar-chart-outline",
+  tasks: "list-outline",
+  samples: "flask-outline",
+  settings: "settings-outline",
+  profile: "person-circle-outline",
+  chatbot: "sparkles-outline",
+  about: "information-circle-outline",
+};
 
 type RoleMenuModalProps = {
   visible: boolean;
@@ -22,8 +51,13 @@ type RoleMenuModalProps = {
     text: string;
     primary: string;
     primarySoft: string;
+    textMuted?: string;
+    buttonStart: string;
+    buttonEnd: string;
+    danger: string;
   };
   onLogout?: () => void;
+  role?: string;
 };
 
 export function RoleMenuModal({
@@ -33,107 +67,158 @@ export function RoleMenuModal({
   activeKey,
   colors,
   onLogout,
+  role,
 }: RoleMenuModalProps) {
+  const slideAnim = useRef(new Animated.Value(-PANEL_WIDTH)).current;
+
+  useEffect(() => {
+    if (visible) {
+      Animated.spring(slideAnim, {
+        toValue: 0,
+        useNativeDriver: true,
+        damping: 22,
+        stiffness: 180,
+      }).start();
+    } else {
+      Animated.timing(slideAnim, {
+        toValue: -PANEL_WIDTH,
+        duration: 220,
+        useNativeDriver: true,
+      }).start();
+    }
+  }, [visible, slideAnim]);
+
   return (
-    <Modal
-      transparent
-      animationType="fade"
-      visible={visible}
-      onRequestClose={onClose}
-    >
+    <Modal transparent visible={visible} onRequestClose={onClose}>
       <View style={styles.overlay}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <SafeAreaView
+        <Animated.View
           style={[
             styles.panel,
             {
               backgroundColor: colors.surface,
-              borderColor: colors.border,
+              transform: [{ translateX: slideAnim }],
             },
           ]}
         >
-          <View style={[styles.header, { borderBottomColor: colors.border }]}>
-            <View>
-              <Text style={[styles.title, { color: colors.text }]}>
-                GlobenTech
-              </Text>
-              <Text style={[styles.subtitle, { color: colors.primary }]}>
-                Navigation
-              </Text>
-            </View>
-            <TouchableOpacity
-              style={[styles.closeButton, { borderColor: colors.border }]}
-              onPress={onClose}
+          <SafeAreaView style={{ flex: 1 }}>
+            {/* ── HEADER ── */}
+            <LinearGradient
+              colors={[colors.buttonStart, colors.buttonEnd]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.header}
             >
-              <Ionicons name="close" size={22} color={colors.text} />
-            </TouchableOpacity>
-          </View>
+              <View style={styles.headerLeft}>
+                <View style={styles.avatarCircle}>
+                  <Ionicons name="person" size={22} color="#fff" />
+                </View>
+                <View style={styles.headerCopy}>
+                  <Text style={styles.headerName}>GlobenTech</Text>
+                  <Text style={styles.headerRole}>{role ?? "User"}</Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={styles.closeBtn}
+                onPress={onClose}
+                activeOpacity={0.7}
+              >
+                <Ionicons name="close" size={22} color="#fff" />
+              </TouchableOpacity>
+            </LinearGradient>
 
-          <View style={styles.menuList}>
-            {items.map((item) => {
-              const active = item.key === activeKey;
-
-              return (
-                <TouchableOpacity
-                  key={item.key}
-                  style={[
-                    styles.menuItem,
-                    {
-                      borderColor: active ? colors.primary : colors.border,
-                      backgroundColor: active
-                        ? colors.primarySoft
-                        : colors.surface,
-                    },
-                  ]}
-                  onPress={() => {
-                    onClose();
-                    if (!active) {
-                      router.push(item.route);
-                    }
-                  }}
-                >
-                  <View
+            {/* ── MENU ITEMS ── */}
+            <ScrollView
+              style={styles.scroll}
+              contentContainerStyle={styles.menuList}
+              showsVerticalScrollIndicator={false}
+            >
+              {items.map((item) => {
+                const active = item.key === activeKey;
+                const iconName = (ICON_MAP[item.key] ??
+                  "chevron-forward-outline") as string;
+                return (
+                  <TouchableOpacity
+                    key={item.key}
+                    activeOpacity={0.75}
                     style={[
-                      styles.activeStripe,
+                      styles.menuItem,
                       {
                         backgroundColor: active
+                          ? colors.primarySoft
+                          : "transparent",
+                        borderLeftColor: active
                           ? colors.primary
                           : "transparent",
                       },
                     ]}
-                  />
-                  <Text
-                    style={[
-                      styles.menuText,
-                      { color: active ? colors.primary : colors.text },
-                    ]}
+                    onPress={() => {
+                      onClose();
+                      if (!active) router.push(item.route);
+                    }}
                   >
-                    {item.label}
-                  </Text>
-                  {active ? (
-                    <Text
-                      style={[styles.activeLabel, { color: colors.primary }]}
+                    <View
+                      style={[
+                        styles.iconBox,
+                        {
+                          backgroundColor: active
+                            ? colors.primary
+                            : colors.primarySoft,
+                        },
+                      ]}
                     >
-                      Current
+                      <Ionicons
+                        name={iconName as any}
+                        size={18}
+                        color={active ? "#fff" : colors.primary}
+                      />
+                    </View>
+                    <Text
+                      style={[
+                        styles.menuText,
+                        {
+                          color: active ? colors.primary : colors.text,
+                          fontWeight: active ? "800" : "600",
+                        },
+                      ]}
+                    >
+                      {item.label}
                     </Text>
-                  ) : null}
-                </TouchableOpacity>
-              );
-            })}
-          </View>
+                    {active && (
+                      <View
+                        style={[
+                          styles.activeDot,
+                          { backgroundColor: colors.primary },
+                        ]}
+                      />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
 
-          {onLogout ? (
-            <TouchableOpacity
-              style={[styles.logoutItem, { borderColor: colors.border }]}
-              onPress={() => {
-                onClose();
-                onLogout();
-              }}
-            >
-              <Text style={styles.logoutText}>Logout</Text>
-            </TouchableOpacity>
-          ) : null}
-        </SafeAreaView>
+            {/* ── LOGOUT ── */}
+            {onLogout ? (
+              <TouchableOpacity
+                style={[styles.logoutBtn, { borderColor: colors.danger }]}
+                activeOpacity={0.75}
+                onPress={() => {
+                  onClose();
+                  onLogout();
+                }}
+              >
+                <Ionicons
+                  name="log-out-outline"
+                  size={20}
+                  color={colors.danger}
+                />
+                <Text style={[styles.logoutText, { color: colors.danger }]}>
+                  Logout
+                </Text>
+              </TouchableOpacity>
+            ) : null}
+          </SafeAreaView>
+        </Animated.View>
       </View>
     </Modal>
   );
@@ -142,88 +227,109 @@ export function RoleMenuModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.34)",
+    backgroundColor: "rgba(7,16,26,0.5)",
   },
   panel: {
-    flex: 1,
-    marginTop: 18,
-    marginHorizontal: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderRadius: 26,
-    paddingHorizontal: 18,
-    paddingTop: 10,
-    paddingBottom: 18,
+    position: "absolute",
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: PANEL_WIDTH,
+    shadowColor: "#000",
+    shadowOpacity: 0.22,
+    shadowRadius: 24,
+    shadowOffset: { width: 8, height: 0 },
+    elevation: 12,
   },
   header: {
+    paddingTop: 52,
+    paddingBottom: 24,
+    paddingHorizontal: 20,
     flexDirection: "row",
-    justifyContent: "space-between",
     alignItems: "center",
-    paddingTop: 8,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    marginBottom: 16,
+    justifyContent: "space-between",
   },
-  title: {
-    fontSize: 28,
-    fontWeight: "800",
+  headerLeft: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
   },
-  subtitle: {
-    fontSize: 13,
-    fontWeight: "700",
-    marginTop: 4,
-    letterSpacing: 0.4,
-  },
-  closeButton: {
-    width: 44,
-    height: 44,
-    borderWidth: 1,
-    borderRadius: 14,
+  avatarCircle: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: "rgba(255,255,255,0.25)",
     alignItems: "center",
     justifyContent: "center",
   },
+  headerCopy: { gap: 2 },
+  headerName: {
+    color: "#fff",
+    fontSize: 17,
+    fontWeight: "800",
+    letterSpacing: 0.3,
+  },
+  headerRole: {
+    color: "rgba(255,255,255,0.78)",
+    fontSize: 12,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
+  closeBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: "rgba(255,255,255,0.2)",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  scroll: { flex: 1 },
   menuList: {
-    flex: 1,
-    gap: 10,
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    gap: 4,
   },
   menuItem: {
-    minHeight: 60,
-    borderRadius: 18,
-    borderWidth: 1,
-    paddingLeft: 18,
-    paddingRight: 14,
     flexDirection: "row",
     alignItems: "center",
+    paddingVertical: 14,
+    paddingHorizontal: 12,
+    borderRadius: 14,
+    borderLeftWidth: 3,
+    gap: 14,
   },
-  activeStripe: {
-    width: 4,
-    alignSelf: "stretch",
-    borderRadius: 999,
-    marginRight: 12,
+  iconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: "center",
+    justifyContent: "center",
   },
   menuText: {
     flex: 1,
-    fontSize: 17,
-    fontWeight: "700",
+    fontSize: 15,
+    letterSpacing: 0.2,
   },
-  activeLabel: {
-    fontSize: 12,
-    fontWeight: "800",
-    letterSpacing: 0.4,
-    textTransform: "uppercase",
+  activeDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
   },
-  logoutItem: {
-    marginTop: 12,
-    minHeight: 58,
-    borderRadius: 18,
-    borderWidth: 1,
-    backgroundColor: "#FDECEC",
+  logoutBtn: {
+    flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
+    gap: 10,
+    marginHorizontal: 18,
+    marginBottom: 24,
+    paddingVertical: 14,
+    borderRadius: 14,
+    borderWidth: 1.5,
   },
   logoutText: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: "800",
-    color: "#B42318",
+    letterSpacing: 0.3,
   },
 });
