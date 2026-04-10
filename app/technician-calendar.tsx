@@ -1,11 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { technicianMenu } from "../constants/role-menus";
 import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
     completeQueueOrder,
     fetchTechnicianWorkQueue,
@@ -18,6 +18,9 @@ import { toLifecycleStatus } from "../lib/order-workflow";
 import { useAppTheme } from "../lib/theme";
 
 type StatusFilter = "all" | "pending" | "processing" | "completed";
+
+const MIN_PROCESSING_WINDOW_MS = 20 * 60 * 1000;
+const localProcessingLockUntilByOrderId = new Map<number, number>();
 
 const normalizeStatus = (value?: string): Exclude<StatusFilter, "all"> => {
   const s = (value || "").toLowerCase();
@@ -39,6 +42,62 @@ const technicianOrderSummary = (value?: string) => {
     return "Admin accepted this order and moved it into technician queue.";
   }
   return "This order is in pending transition state for technician actions.";
+};
+
+const toValidDate = (value?: string | null) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed;
+};
+
+const getProcessingWindowEnd = (
+  entry: QueueEntry,
+  processingStartedAt?: Date,
+) => {
+  const scheduledStart = toValidDate(entry.scheduled_start);
+  const estimatedCompletion =
+    toValidDate(entry.estimated_completion) ?? toValidDate(entry.scheduled_end);
+  const localLockUntil = localProcessingLockUntilByOrderId.get(entry.order_id);
+  const localLockEnd =
+    typeof localLockUntil === "number" ? new Date(localLockUntil) : null;
+
+  if (
+    !scheduledStart &&
+    !estimatedCompletion &&
+    !processingStartedAt &&
+    !localLockEnd
+  ) {
+    return null;
+  }
+
+  const candidates = [estimatedCompletion, localLockEnd].filter(
+    (value): value is Date => Boolean(value),
+  );
+  const baseStart = processingStartedAt ?? scheduledStart;
+
+  if (baseStart) {
+    candidates.push(new Date(baseStart.getTime() + MIN_PROCESSING_WINDOW_MS));
+  }
+
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  return candidates.reduce((latest, current) =>
+    current.getTime() > latest.getTime() ? current : latest,
+  );
+};
+
+const isProcessingWindowActive = (entry: QueueEntry) => {
+  const lifecycle = toLifecycleStatus(entry.order_status);
+  if (!(lifecycle === "testing" || lifecycle === "preparation")) {
+    return false;
+  }
+
+  const windowEnd = getProcessingWindowEnd(entry);
+  if (!windowEnd) return false;
+  return windowEnd.getTime() > Date.now();
 };
 
 export default function TechnicianCalendarPage() {
@@ -65,17 +124,7 @@ export default function TechnicianCalendarPage() {
     }
   }, []);
 
-  useEffect(() => {
-    loadCalendar();
-    const timer = setInterval(loadCalendar, 8000);
-    return () => clearInterval(timer);
-  }, [loadCalendar]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadCalendar();
-    }, [loadCalendar]),
-  );
+  useFocusedPolling(loadCalendar, { intervalMs: 12000 });
 
   const statusCounts = useMemo(() => {
     let pending = 0;
@@ -117,6 +166,15 @@ export default function TechnicianCalendarPage() {
   }, [entries, statusFilter]);
 
   const markChecked = async (entry: QueueEntry) => {
+    const processingWindowEnd = getProcessingWindowEnd(entry);
+    if (isProcessingWindowActive(entry) && processingWindowEnd) {
+      feedback.showInfo(
+        "Processing Still Running",
+        `${entry.order_number} should remain in processing until ${processingWindowEnd.toLocaleTimeString()}. Complete it after that time.`,
+      );
+      return;
+    }
+
     setBusyQueueId(entry.queue_id);
     try {
       await completeQueueOrder({
@@ -124,6 +182,7 @@ export default function TechnicianCalendarPage() {
         orderNumber: entry.order_number,
         queueId: entry.queue_id,
       });
+      localProcessingLockUntilByOrderId.delete(entry.order_id);
       await loadCalendar();
       feedback.showSuccess(
         "Queue Updated",
@@ -180,6 +239,28 @@ export default function TechnicianCalendarPage() {
   const startProcessing = async (entry: QueueEntry) => {
     setBusyQueueId(entry.queue_id);
     try {
+      const processingStartedAt = new Date();
+      const processingWindowEnd = getProcessingWindowEnd(
+        entry,
+        processingStartedAt,
+      );
+
+      if (entry.queue_id > 0 && processingWindowEnd) {
+        await rescheduleQueue(
+          entry.queue_id,
+          processingStartedAt.toISOString(),
+          processingWindowEnd.toISOString(),
+          "Processing started from mobile app with minimum window applied",
+        );
+      }
+
+      if (processingWindowEnd) {
+        localProcessingLockUntilByOrderId.set(
+          entry.order_id,
+          processingWindowEnd.getTime(),
+        );
+      }
+
       await startQueueProcessing(
         entry.order_id,
         entry.queue_id,
@@ -188,7 +269,7 @@ export default function TechnicianCalendarPage() {
       await loadCalendar();
       feedback.showSuccess(
         "Processing Started",
-        `${entry.order_number} moved to processing. Customer will see the status update shortly.`,
+        `${entry.order_number} moved to processing and will stay active for at least 20 minutes before completion is allowed.`,
       );
     } catch (error) {
       feedback.showError(
@@ -421,6 +502,9 @@ export default function TechnicianCalendarPage() {
                 {(() => {
                   const lifecycle = toLifecycleStatus(entry.order_status);
                   const rawStatus = (entry.order_status || "").toLowerCase();
+                  const processingWindowActive =
+                    isProcessingWindowActive(entry);
+                  const processingWindowEnd = getProcessingWindowEnd(entry);
                   const canStartProcessing =
                     lifecycle === "approved" ||
                     lifecycle === "in_queue" ||
@@ -433,6 +517,10 @@ export default function TechnicianCalendarPage() {
                     rawStatus.includes("result") ||
                     rawStatus.includes("complete") ||
                     rawStatus.includes("done");
+                  const canMarkChecked =
+                    !alreadyCompleted &&
+                    alreadyProcessing &&
+                    !processingWindowActive;
 
                   return (
                     <>
@@ -482,6 +570,14 @@ export default function TechnicianCalendarPage() {
                         Estimated Completion:{" "}
                         {entry.estimated_completion || "Pending"}
                       </Text>
+                      {processingWindowActive && processingWindowEnd ? (
+                        <Text
+                          style={[styles.sub, { color: theme.colors.warning }]}
+                        >
+                          Processing window active until{" "}
+                          {processingWindowEnd.toLocaleTimeString()}.
+                        </Text>
+                      ) : null}
                       {entry.queue_id < 0 ? (
                         <Text
                           style={[styles.sub, { color: theme.colors.warning }]}
@@ -534,10 +630,16 @@ export default function TechnicianCalendarPage() {
                             styles.actionBtn,
                             {
                               backgroundColor: theme.colors.success,
-                              opacity: busyQueueId === entry.queue_id ? 0.7 : 1,
+                              opacity:
+                                busyQueueId === entry.queue_id ||
+                                !canMarkChecked
+                                  ? 0.7
+                                  : 1,
                             },
                           ]}
-                          disabled={busyQueueId === entry.queue_id}
+                          disabled={
+                            busyQueueId === entry.queue_id || !canMarkChecked
+                          }
                           onPress={() =>
                             confirm.openConfirm({
                               title: "Mark As Checked",
@@ -547,7 +649,15 @@ export default function TechnicianCalendarPage() {
                             })
                           }
                         >
-                          <Text style={styles.actionBtnText}>Check</Text>
+                          <Text style={styles.actionBtnText}>
+                            {alreadyCompleted
+                              ? "Completed"
+                              : processingWindowActive
+                                ? "Processing"
+                                : canMarkChecked
+                                  ? "Check"
+                                  : "Start First"}
+                          </Text>
                         </Pressable>
                         <Pressable
                           style={[

@@ -1,18 +1,19 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { StyleSheet, Text, TextInput, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import {
-    adminMenu,
-    customerMenu,
-    guestMenu,
-    technicianMenu,
+  adminMenu,
+  customerMenu,
+  guestMenu,
+  technicianMenu,
 } from "../constants/role-menus";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import { fetchMyProfile, updateMyProfile } from "../lib/account-api";
-import { useSessionState } from "../lib/session-store";
+import { setSessionUser, useSessionState } from "../lib/session-store";
 import { useAppTheme } from "../lib/theme";
 
 /**
@@ -80,22 +81,26 @@ export default function ProfileEditPage() {
   const [address, setAddress] = useState("");
   const [email, setEmail] = useState("");
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const profile = await fetchMyProfile();
-        setFullName(profile.full_name || "");
-        setPhone(profile.phone || "");
-        setCompanyName(profile.company_name || "");
-        setAddress(profile.address || "");
-        setEmail(session.user?.email || "");
-      } catch {
-        setEmail(session.user?.email || "");
-      }
-    };
-
-    load();
+  const loadProfile = useCallback(async () => {
+    try {
+      const profile = await fetchMyProfile();
+      setFullName(profile.full_name || "");
+      setPhone(profile.phone || "");
+      setCompanyName(profile.company_name || "");
+      setAddress(profile.address || "");
+      setEmail(profile.email || session.user?.email || "");
+      setSessionUser({
+        id: profile.id,
+        full_name: profile.full_name,
+        email: profile.email,
+        role: profile.role,
+      });
+    } catch {
+      setEmail(session.user?.email || "");
+    }
   }, [session.user?.email]);
+
+  useFocusedPolling(loadProfile, { intervalMs: 25000 });
 
   const menuItems = useMemo(() => {
     const role = session.user?.role;
@@ -129,6 +134,17 @@ export default function ProfileEditPage() {
         company_name: companyName,
         address,
       });
+
+      // Pull the canonical profile right after save and sync the global session
+      // so header/menu labels update immediately across the app.
+      const refreshed = await fetchMyProfile();
+      setSessionUser({
+        id: refreshed.id,
+        full_name: refreshed.full_name,
+        email: refreshed.email,
+        role: refreshed.role,
+      });
+
       feedback.showSuccess("Profile Updated", "Your profile has been updated.");
       router.replace("/profile");
     } catch (error) {
@@ -152,115 +168,111 @@ export default function ProfileEditPage() {
       leftActionMode="back"
       onLeftActionPress={() => router.replace("/profile")}
     >
-      <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: theme.colors.surface,
-              borderColor: theme.colors.border,
-            },
-          ]}
-        >
-          {/* Header */}
-          <View style={styles.headerRow}>
-            <Ionicons
-              name="person-circle-outline"
-              size={24}
-              color={theme.colors.primary}
-            />
-            <Text style={[styles.headerText, { color: theme.colors.text }]}>
-              Edit Account Details
-            </Text>
-          </View>
-
-          {/* Form Fields */}
-          <View style={styles.formSection}>
-            <FormInput
-              label="Full Name *"
-              value={fullName}
-              onChangeText={setFullName}
-              placeholder="Enter your full name"
-              inputBgColor={theme.colors.inputBg}
-              borderColor={theme.colors.border}
-              textColor={theme.colors.text}
-              placeholderTextColor={theme.colors.textMuted}
-            />
-
-            <FormInput
-              label="Email (Read-only)"
-              value={email}
-              onChangeText={() => {}}
-              placeholder="Email"
-              editable={false}
-              inputBgColor={theme.colors.surfaceMuted}
-              borderColor={theme.colors.border}
-              textColor={theme.colors.textMuted}
-              placeholderTextColor={theme.colors.textMuted}
-            />
-            <Text
-              style={[styles.helperText, { color: theme.colors.textMuted }]}
-            >
-              Email cannot be changed because it is tied to your login session.
-            </Text>
-
-            <FormInput
-              label="Phone"
-              value={phone}
-              onChangeText={setPhone}
-              placeholder="Enter your phone number"
-              inputBgColor={theme.colors.inputBg}
-              borderColor={theme.colors.border}
-              textColor={theme.colors.text}
-              placeholderTextColor={theme.colors.textMuted}
-            />
-
-            <FormInput
-              label="Company Name"
-              value={companyName}
-              onChangeText={setCompanyName}
-              placeholder="Enter your company name"
-              inputBgColor={theme.colors.inputBg}
-              borderColor={theme.colors.border}
-              textColor={theme.colors.text}
-              placeholderTextColor={theme.colors.textMuted}
-            />
-
-            <FormInput
-              label="Address"
-              value={address}
-              onChangeText={setAddress}
-              placeholder="Enter your address"
-              multiline
-              inputBgColor={theme.colors.inputBg}
-              borderColor={theme.colors.border}
-              textColor={theme.colors.text}
-              placeholderTextColor={theme.colors.textMuted}
-            />
-          </View>
-
-          {/* Action Buttons */}
-          <View style={styles.buttonGroup}>
-            <GradientButton
-              onPress={onSave}
-              disabled={busy}
-              loading={busy}
-              variant="primary"
-              accessibilityLabel="Save profile changes"
-            >
-              {busy ? "Saving..." : "Save Changes"}
-            </GradientButton>
-            <GradientButton
-              onPress={() => router.replace("/profile")}
-              disabled={busy}
-              variant="ghost"
-              accessibilityLabel="Cancel and return to profile"
-            >
-              Cancel
-            </GradientButton>
-          </View>
+      <View
+        style={[
+          styles.card,
+          {
+            backgroundColor: theme.colors.surface,
+            borderColor: theme.colors.border,
+          },
+        ]}
+      >
+        {/* Header */}
+        <View style={styles.headerRow}>
+          <Ionicons
+            name="person-circle-outline"
+            size={24}
+            color={theme.colors.primary}
+          />
+          <Text style={[styles.headerText, { color: theme.colors.text }]}>
+            Edit Account Details
+          </Text>
         </View>
-      </ScrollView>
+
+        {/* Form Fields */}
+        <View style={styles.formSection}>
+          <FormInput
+            label="Full Name *"
+            value={fullName}
+            onChangeText={setFullName}
+            placeholder="Enter your full name"
+            inputBgColor={theme.colors.inputBg}
+            borderColor={theme.colors.border}
+            textColor={theme.colors.text}
+            placeholderTextColor={theme.colors.textMuted}
+          />
+
+          <FormInput
+            label="Email (Read-only)"
+            value={email}
+            onChangeText={() => {}}
+            placeholder="Email"
+            editable={false}
+            inputBgColor={theme.colors.surfaceMuted}
+            borderColor={theme.colors.border}
+            textColor={theme.colors.textMuted}
+            placeholderTextColor={theme.colors.textMuted}
+          />
+          <Text style={[styles.helperText, { color: theme.colors.textMuted }]}>
+            Email cannot be changed because it is tied to your login session.
+          </Text>
+
+          <FormInput
+            label="Phone"
+            value={phone}
+            onChangeText={setPhone}
+            placeholder="Enter your phone number"
+            inputBgColor={theme.colors.inputBg}
+            borderColor={theme.colors.border}
+            textColor={theme.colors.text}
+            placeholderTextColor={theme.colors.textMuted}
+          />
+
+          <FormInput
+            label="Company Name"
+            value={companyName}
+            onChangeText={setCompanyName}
+            placeholder="Enter your company name"
+            inputBgColor={theme.colors.inputBg}
+            borderColor={theme.colors.border}
+            textColor={theme.colors.text}
+            placeholderTextColor={theme.colors.textMuted}
+          />
+
+          <FormInput
+            label="Address"
+            value={address}
+            onChangeText={setAddress}
+            placeholder="Enter your address"
+            multiline
+            inputBgColor={theme.colors.inputBg}
+            borderColor={theme.colors.border}
+            textColor={theme.colors.text}
+            placeholderTextColor={theme.colors.textMuted}
+          />
+        </View>
+
+        {/* Action Buttons */}
+        <View style={styles.buttonGroup}>
+          <GradientButton
+            onPress={onSave}
+            disabled={busy}
+            loading={busy}
+            variant="primary"
+            accessibilityLabel="Save profile changes"
+          >
+            {busy ? "Saving..." : "Save Changes"}
+          </GradientButton>
+          <GradientButton
+            onPress={() => router.replace("/profile")}
+            disabled={busy}
+            variant="outline"
+            accessibilityLabel="Cancel and return to profile"
+          >
+            Cancel
+          </GradientButton>
+        </View>
+      </View>
       {feedback.modal}
     </RoleContentPage>
   );

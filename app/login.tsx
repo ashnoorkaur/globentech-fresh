@@ -2,8 +2,9 @@ import { router } from "expo-router";
 import { useState } from "react";
 import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { PasswordField } from "../components/ui/password-field";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
-import { fetchSessionUser, loginWithPassword } from "../lib/auth-api";
+import { loginWithPassword } from "../lib/auth-api";
 import { setSessionUser } from "../lib/session-store";
 import { useAppTheme } from "../lib/theme";
 
@@ -29,16 +30,7 @@ export default function LoginPage() {
     setLoading(true);
     try {
       setDebugRoleText("");
-      const loginUser = await loginWithPassword(email.trim(), password);
-      let user = loginUser;
-
-      // Verify session role after login to avoid occasional stale role routing.
-      try {
-        const sessionUser = await fetchSessionUser();
-        user = sessionUser;
-      } catch {
-        // Keep login response as fallback.
-      }
+      const user = await loginWithPassword(email.trim(), password);
 
       setSessionUser(user);
 
@@ -122,20 +114,10 @@ export default function LoginPage() {
             },
           ]}
         />
-        <TextInput
+        <PasswordField
           value={password}
           onChangeText={setPassword}
           placeholder="Password"
-          secureTextEntry
-          placeholderTextColor={theme.colors.textMuted}
-          style={[
-            styles.input,
-            {
-              color: theme.colors.text,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.inputBg,
-            },
-          ]}
         />
 
         <Pressable

@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { technicianMenu } from "../constants/role-menus";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import { fetchTechnicianWorkQueue, type QueueEntry } from "../lib/calendar-api";
 import { statusLabel, toLifecycleStatus } from "../lib/order-workflow";
 import { useAppTheme } from "../lib/theme";
@@ -64,17 +64,7 @@ export default function TechnicianTasksPage() {
     }
   }, []);
 
-  useEffect(() => {
-    loadTasks();
-    const timer = setInterval(loadTasks, 8000);
-    return () => clearInterval(timer);
-  }, [loadTasks]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadTasks();
-    }, [loadTasks]),
-  );
+  useFocusedPolling(loadTasks, { intervalMs: 12000 });
 
   const stats = useMemo(() => {
     const completed = queue.filter(

@@ -3,16 +3,16 @@ import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
 import { useEffect, useRef } from "react";
 import {
-    Animated,
-    Dimensions,
-    Modal,
-    Pressable,
-    SafeAreaView,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  Animated,
+  Dimensions,
+  Modal,
+  Pressable,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from "react-native";
 import { MenuItem } from "../constants/role-menus";
 
@@ -45,6 +45,7 @@ type RoleMenuModalProps = {
   onClose: () => void;
   items: MenuItem[];
   activeKey: string;
+  isDark?: boolean;
   colors: {
     surface: string;
     border: string;
@@ -58,6 +59,8 @@ type RoleMenuModalProps = {
   };
   onLogout?: () => void;
   role?: string;
+  displayName?: string;
+  onProfilePress?: () => void;
 };
 
 export function RoleMenuModal({
@@ -65,9 +68,12 @@ export function RoleMenuModal({
   onClose,
   items,
   activeKey,
+  isDark = false,
   colors,
   onLogout,
   role,
+  displayName,
+  onProfilePress,
 }: RoleMenuModalProps) {
   const slideAnim = useRef(new Animated.Value(-PANEL_WIDTH)).current;
 
@@ -88,9 +94,11 @@ export function RoleMenuModal({
     }
   }, [visible, slideAnim]);
 
+  const overlayBg = isDark ? "rgba(7,16,26,0.7)" : "rgba(7,16,26,0.5)";
+
   return (
     <Modal transparent visible={visible} onRequestClose={onClose}>
-      <View style={styles.overlay}>
+      <View style={[styles.overlay, { backgroundColor: overlayBg }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
         <Animated.View
           style={[
@@ -109,15 +117,26 @@ export function RoleMenuModal({
               end={{ x: 1, y: 1 }}
               style={styles.header}
             >
-              <View style={styles.headerLeft}>
+              <TouchableOpacity
+                style={styles.headerLeft}
+                onPress={() => {
+                  onClose();
+                  (onProfilePress ?? (() => router.push("/profile")))();
+                }}
+                activeOpacity={0.8}
+              >
                 <View style={styles.avatarCircle}>
                   <Ionicons name="person" size={22} color="#fff" />
                 </View>
                 <View style={styles.headerCopy}>
-                  <Text style={styles.headerName}>GlobenTech</Text>
-                  <Text style={styles.headerRole}>{role ?? "User"}</Text>
+                  <Text style={styles.headerName} numberOfLines={1}>
+                    {displayName || role || "User"}
+                  </Text>
+                  <Text style={styles.headerRole} numberOfLines={1}>
+                    {role ?? "User"}
+                  </Text>
                 </View>
-              </View>
+              </TouchableOpacity>
               <TouchableOpacity
                 style={styles.closeBtn}
                 onPress={onClose}
@@ -227,7 +246,6 @@ export function RoleMenuModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(7,16,26,0.5)",
   },
   panel: {
     position: "absolute",

@@ -1,11 +1,12 @@
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { customerMenu } from "../constants/role-menus";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
-  fetchCustomerMyOrders,
-  type CustomerOrderRow,
+    fetchCustomerMyOrders,
+    type CustomerOrderRow,
 } from "../lib/orders-api";
 import { useAppTheme } from "../lib/theme";
 
@@ -21,11 +22,7 @@ export default function CustomerDashboardPage() {
     }
   }, []);
 
-  useEffect(() => {
-    loadOrders();
-    const timer = setInterval(loadOrders, 15000);
-    return () => clearInterval(timer);
-  }, [loadOrders]);
+  useFocusedPolling(loadOrders, { intervalMs: 20000 });
 
   const stats = useMemo(() => {
     const total = orders.length;

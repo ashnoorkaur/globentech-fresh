@@ -1,23 +1,35 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import {
-    adminMenu,
-    customerMenu,
-    guestMenu,
-    technicianMenu,
+  adminMenu,
+  customerMenu,
+  guestMenu,
+  technicianMenu,
 } from "../constants/role-menus";
 import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import { fetchMyProfile, type ProfileDto } from "../lib/account-api";
-import { logoutSession } from "../lib/auth-api";
+import { fetchSessionUser, logoutSession } from "../lib/auth-api";
 import { clearChatSession } from "../lib/chatbot-session";
 import { clearNotifications } from "../lib/notifications-store";
 import { setSessionUser, useSessionState } from "../lib/session-store";
 import { getIsDarkMode, setDarkMode, useAppTheme } from "../lib/theme";
+
+const isRolePlaceholderName = (value?: string) => {
+  const normalized = (value || "").trim().toLowerCase();
+  return (
+    normalized === "authenticated user" ||
+    normalized === "customer" ||
+    normalized === "technician" ||
+    normalized === "admin" ||
+    normalized === "administrator"
+  );
+};
 
 /**
  * Reusable info row component for displaying profile information
@@ -68,20 +80,68 @@ export default function ProfilePage() {
       const p = await fetchMyProfile();
       setProfile(p);
       // Sync session store with fetched profile data
+      const resolvedName = !isRolePlaceholderName(p.full_name)
+        ? p.full_name
+        : "";
       setSessionUser({
         id: p.id,
-        full_name: p.full_name,
+        full_name: resolvedName,
         email: p.email,
         role: p.role,
       });
     } catch {
-      return;
-    }
-  }, []);
+      // Customer profile endpoint can occasionally fail on some backend paths;
+      // keep profile fields populated from session user instead of showing blanks.
+      try {
+        const sessionUser = await fetchSessionUser();
+        const resolvedId =
+          sessionUser.id > 0
+            ? sessionUser.id
+            : session.user?.id && session.user.id > 0
+              ? session.user.id
+              : 0;
+        const resolvedEmail =
+          sessionUser.email && sessionUser.email !== "session@local"
+            ? sessionUser.email
+            : session.user?.email || "";
+        const resolvedName =
+          sessionUser.full_name && !isRolePlaceholderName(sessionUser.full_name)
+            ? sessionUser.full_name
+            : session.user?.full_name || "";
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+        setSessionUser({
+          ...sessionUser,
+          id: resolvedId,
+          email: resolvedEmail,
+          full_name: resolvedName,
+        });
+        setProfile((prev) => ({
+          id: resolvedId,
+          full_name: resolvedName,
+          email: resolvedEmail,
+          role: sessionUser.role,
+          is_active: prev?.is_active ?? true,
+          phone: prev?.phone,
+          company_name: prev?.company_name,
+          address: prev?.address,
+        }));
+      } catch {
+        setProfile((prev) => {
+          if (prev) return prev;
+          if (!session.user) return null;
+          return {
+            id: session.user.id,
+            full_name: session.user.full_name,
+            email: session.user.email,
+            role: session.user.role,
+            is_active: true,
+          };
+        });
+      }
+    }
+  }, [session.user]);
+
+  useFocusedPolling(loadData, { intervalMs: 25000 });
 
   const menuItems = useMemo(() => {
     const role = session.user?.role;
@@ -108,6 +168,24 @@ export default function ProfilePage() {
 
   const statusBadgeColor =
     profile?.is_active !== false ? theme.colors.success : theme.colors.danger;
+
+  const resolvedProfileId =
+    profile?.id && profile.id > 0
+      ? profile.id
+      : session.user?.id && session.user.id > 0
+        ? session.user.id
+        : null;
+  const resolvedProfileName =
+    (!isRolePlaceholderName(profile?.full_name) && profile?.full_name) ||
+    (!isRolePlaceholderName(session.user?.full_name) &&
+      session.user?.full_name) ||
+    "";
+  const resolvedProfileEmail =
+    profile?.email && profile.email !== "session@local"
+      ? profile.email
+      : session.user?.email && session.user.email !== "session@local"
+        ? session.user.email
+        : "";
 
   const logoutNow = () => {
     confirm.openConfirm({
@@ -223,7 +301,7 @@ export default function ProfilePage() {
           <View style={styles.infoGrid}>
             <InfoRow
               label="User ID"
-              value={profile?.id != null ? String(profile.id) : ""}
+              value={resolvedProfileId != null ? String(resolvedProfileId) : ""}
               backgroundColor={theme.colors.surfaceMuted}
               borderColor={theme.colors.border}
               textColor={theme.colors.text}
@@ -231,7 +309,7 @@ export default function ProfilePage() {
             />
             <InfoRow
               label="Full Name"
-              value={profile?.full_name || ""}
+              value={resolvedProfileName}
               backgroundColor={theme.colors.surfaceMuted}
               borderColor={theme.colors.border}
               textColor={theme.colors.text}
@@ -239,7 +317,7 @@ export default function ProfilePage() {
             />
             <InfoRow
               label="Email"
-              value={profile?.email || ""}
+              value={resolvedProfileEmail}
               backgroundColor={theme.colors.surfaceMuted}
               borderColor={theme.colors.border}
               textColor={theme.colors.text}

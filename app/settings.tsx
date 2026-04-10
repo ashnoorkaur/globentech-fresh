@@ -1,33 +1,35 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput,
-    View,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
+import { PasswordField } from "../components/ui/password-field";
 import {
-    adminMenu,
-    customerMenu,
-    guestMenu,
-    technicianMenu,
+  adminMenu,
+  customerMenu,
+  guestMenu,
+  technicianMenu,
 } from "../constants/role-menus";
 import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
-    adminActivateUser,
-    adminChangeRole,
-    adminDeactivateUser,
-    changeMyPassword,
-    fetchAdminUserList,
-    fetchMyProfile,
-    type ProfileDto,
-    updateMyProfile,
+  adminActivateUser,
+  adminChangeRole,
+  adminDeactivateUser,
+  changeMyPassword,
+  fetchAdminUserList,
+  fetchMyProfile,
+  type ProfileDto,
+  updateMyProfile,
 } from "../lib/account-api";
 import { logoutSession } from "../lib/auth-api";
 import { clearChatSession } from "../lib/chatbot-session";
@@ -80,6 +82,12 @@ export default function SettingsPage() {
       setPhone(p.phone || "");
       setCompanyName(p.company_name || "");
       setAddress(p.address || "");
+      setSessionUser({
+        id: p.id,
+        full_name: p.full_name,
+        email: p.email,
+        role: p.role,
+      });
 
       if (session.user?.role === "administrator") {
         const list = await fetchAdminUserList();
@@ -95,9 +103,7 @@ export default function SettingsPage() {
     setDarkModeState(value);
   };
 
-  useEffect(() => {
-    loadData();
-  }, [loadData]);
+  useFocusedPolling(loadData, { intervalMs: 25000 });
 
   const saveProfile = async () => {
     setBusy(true);
@@ -288,64 +294,93 @@ export default function SettingsPage() {
             </View>
           </View>
 
-          <TextInput
-            value={fullName}
-            onChangeText={setFullName}
-            placeholder="Full Name"
-            placeholderTextColor={theme.colors.textMuted}
-            style={[
-              styles.input,
-              {
-                color: theme.colors.text,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.inputBg,
-              },
-            ]}
-          />
-          <TextInput
-            value={phone}
-            onChangeText={setPhone}
-            placeholder="Phone"
-            placeholderTextColor={theme.colors.textMuted}
-            style={[
-              styles.input,
-              {
-                color: theme.colors.text,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.inputBg,
-              },
-            ]}
-          />
-          <TextInput
-            value={companyName}
-            onChangeText={setCompanyName}
-            placeholder="Company Name"
-            placeholderTextColor={theme.colors.textMuted}
-            style={[
-              styles.input,
-              {
-                color: theme.colors.text,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.inputBg,
-              },
-            ]}
-          />
-          <TextInput
-            value={address}
-            onChangeText={setAddress}
-            placeholder="Address"
-            multiline
-            placeholderTextColor={theme.colors.textMuted}
-            style={[
-              styles.input,
-              styles.textarea,
-              {
-                color: theme.colors.text,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.inputBg,
-              },
-            ]}
-          />
+          <View style={styles.fieldGroup}>
+            <Text
+              style={[styles.fieldLabel, { color: theme.colors.textMuted }]}
+            >
+              Full Name
+            </Text>
+            <TextInput
+              value={fullName}
+              onChangeText={setFullName}
+              placeholder="Enter your full name"
+              placeholderTextColor={theme.colors.textMuted}
+              style={[
+                styles.input,
+                {
+                  color: theme.colors.text,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                },
+              ]}
+            />
+          </View>
+          <View style={styles.fieldGroup}>
+            <Text
+              style={[styles.fieldLabel, { color: theme.colors.textMuted }]}
+            >
+              Phone
+            </Text>
+            <TextInput
+              value={phone}
+              onChangeText={setPhone}
+              placeholder="Enter your phone number"
+              keyboardType="phone-pad"
+              placeholderTextColor={theme.colors.textMuted}
+              style={[
+                styles.input,
+                {
+                  color: theme.colors.text,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                },
+              ]}
+            />
+          </View>
+          <View style={styles.fieldGroup}>
+            <Text
+              style={[styles.fieldLabel, { color: theme.colors.textMuted }]}
+            >
+              Company Name
+            </Text>
+            <TextInput
+              value={companyName}
+              onChangeText={setCompanyName}
+              placeholder="Enter your company name"
+              placeholderTextColor={theme.colors.textMuted}
+              style={[
+                styles.input,
+                {
+                  color: theme.colors.text,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                },
+              ]}
+            />
+          </View>
+          <View style={styles.fieldGroup}>
+            <Text
+              style={[styles.fieldLabel, { color: theme.colors.textMuted }]}
+            >
+              Address
+            </Text>
+            <TextInput
+              value={address}
+              onChangeText={setAddress}
+              placeholder="Enter your address"
+              multiline
+              placeholderTextColor={theme.colors.textMuted}
+              style={[
+                styles.input,
+                styles.textarea,
+                {
+                  color: theme.colors.text,
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.inputBg,
+                },
+              ]}
+            />
+          </View>
           <View style={styles.inlineActions}>
             <GradientButton
               onPress={saveProfile}
@@ -377,50 +412,20 @@ export default function SettingsPage() {
           <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
             Change Password
           </Text>
-          <TextInput
+          <PasswordField
             value={currentPassword}
             onChangeText={setCurrentPassword}
-            secureTextEntry
             placeholder="Current password"
-            placeholderTextColor={theme.colors.textMuted}
-            style={[
-              styles.input,
-              {
-                color: theme.colors.text,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.inputBg,
-              },
-            ]}
           />
-          <TextInput
+          <PasswordField
             value={newPassword}
             onChangeText={setNewPassword}
-            secureTextEntry
             placeholder="New password"
-            placeholderTextColor={theme.colors.textMuted}
-            style={[
-              styles.input,
-              {
-                color: theme.colors.text,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.inputBg,
-              },
-            ]}
           />
-          <TextInput
+          <PasswordField
             value={confirmPassword}
             onChangeText={setConfirmPassword}
-            secureTextEntry
             placeholder="Confirm password"
-            placeholderTextColor={theme.colors.textMuted}
-            style={[
-              styles.input,
-              {
-                color: theme.colors.text,
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.inputBg,
-              },
-            ]}
           />
           <GradientButton
             onPress={savePassword}
@@ -499,6 +504,13 @@ export default function SettingsPage() {
 const styles = StyleSheet.create({
   card: { borderWidth: 1, borderRadius: 20, padding: 14, gap: 8 },
   sectionTitle: { fontSize: 18, fontWeight: "800" },
+  fieldGroup: { gap: 4 },
+  fieldLabel: {
+    fontSize: 11,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    textTransform: "uppercase",
+  },
   themePanel: { borderWidth: 1, borderRadius: 12, padding: 10, gap: 6 },
   themeTitle: { fontSize: 13, fontWeight: "800" },
   themeSub: { fontSize: 11, fontWeight: "600" },

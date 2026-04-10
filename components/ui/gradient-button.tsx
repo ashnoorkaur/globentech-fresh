@@ -83,8 +83,10 @@ export function GradientButton({
   };
 
   if (variant === "outline" || variant === "ghost") {
-    const variantStyle =
-      variant === "outline" ? styles.variantOutline : styles.variantGhost;
+    const isOutline = variant === "outline";
+    const borderColor = isOutline ? theme.colors.primary : theme.colors.border;
+    const textColor = isOutline ? theme.colors.primary : theme.colors.textMuted;
+    const bgColor = isOutline ? "transparent" : theme.colors.surfaceMuted;
 
     return (
       <TouchableOpacity
@@ -92,10 +94,11 @@ export function GradientButton({
           styles.container,
           getSizeStyles(),
           compact && styles.sizeCompact,
-          variantStyle,
           isDisabled && styles.disabled,
           {
-            borderColor: theme.colors.border,
+            borderWidth: 1.5,
+            borderColor,
+            backgroundColor: bgColor,
           },
           style,
         ]}
@@ -105,15 +108,7 @@ export function GradientButton({
         accessibilityRole="button"
         accessibilityLabel={accessibilityLabel}
       >
-        <Text
-          style={[
-            styles.text,
-            {
-              color:
-                variant === "ghost" ? theme.colors.text : theme.colors.border,
-            },
-          ]}
-        >
+        <Text style={[styles.text, { color: textColor }]}>
           {loading ? "..." : children}
         </Text>
       </TouchableOpacity>
@@ -177,17 +172,6 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 20,
     borderRadius: 16,
-  },
-  // Button variants
-  variantOutline: {
-    borderWidth: 1.5,
-    backgroundColor: "transparent",
-  },
-  variantGhost: {
-    backgroundColor: "transparent",
-    borderWidth: 0,
-    shadowOpacity: 0,
-    elevation: 0,
   },
   disabled: {
     opacity: 0.55,

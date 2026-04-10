@@ -49,6 +49,182 @@ const decodeHtml = (value: string) =>
 const stripTags = (value: string) =>
   decodeHtml(value.replace(/<[^>]*>/g, "")).trim();
 
+const extractHiddenInputs = (html: string): Record<string, string> => {
+  const out: Record<string, string> = {};
+  for (const match of html.matchAll(/<input[^>]*type=["']hidden["'][^>]*>/gi)) {
+    const tag = match[0];
+    const name =
+      tag.match(/name=["']([^"']*)["']/i)?.[1] ||
+      tag.match(/name=([^\s>]+)/i)?.[1];
+    const value =
+      tag.match(/value=["']([^"']*)["']/i)?.[1] ??
+      tag.match(/value=([^\s>]+)/i)?.[1] ??
+      "";
+    if (name) out[name] = decodeHtml(value);
+  }
+  return out;
+};
+
+const extractInputValue = (html: string, fieldName: string) => {
+  const directValue =
+    html.match(
+      new RegExp(
+        `<input[^>]*name=["']${fieldName}["'][^>]*value=["']([^"']*)["'][^>]*>`,
+        "i",
+      ),
+    )?.[1] ||
+    html.match(
+      new RegExp(
+        `<input[^>]*value=["']([^"']*)["'][^>]*name=["']${fieldName}["'][^>]*>`,
+        "i",
+      ),
+    )?.[1] ||
+    html.match(
+      new RegExp(
+        `<textarea[^>]*name=["']${fieldName}["'][^>]*>([\\s\\S]*?)<\\/textarea>`,
+        "i",
+      ),
+    )?.[1];
+
+  return directValue ? decodeHtml(directValue).trim() : "";
+};
+
+const extractLabeledValue = (html: string, label: string) => {
+  const normalizedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const fromValueBlock =
+    html.match(
+      new RegExp(
+        `${normalizedLabel}[\\s\\S]{0,120}?<[^>]*>([^<]+)<\\/[^>]+>`,
+        "i",
+      ),
+    )?.[1] ||
+    html.match(
+      new RegExp(`${normalizedLabel}\\s*[:\\-]?\\s*([^<\\n\\r]+)`, "i"),
+    )?.[1];
+
+  return fromValueBlock ? stripTags(fromValueBlock) : "";
+};
+
+const isRolePlaceholderName = (name?: string) =>
+  /^(customer|technician|admin(istrator)?|authenticated user)$/i.test(
+    (name || "").trim(),
+  );
+
+const normalizeProfileRole = (role?: string): ProfileDto["role"] => {
+  const value = (role || "").trim().toLowerCase();
+  if (value === "administrator" || value === "admin") return "administrator";
+  if (value === "technician" || value === "tech") return "technician";
+  return "customer";
+};
+
+const titleCase = (value: string) =>
+  value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+
+const deriveNameFromEmail = (email: string) => {
+  const localPart = email.split("@")[0] || "";
+  const cleaned = localPart
+    .replace(/[._-]+/g, " ")
+    .replace(/\d+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned ? titleCase(cleaned) : "";
+};
+
+const fetchLegacyProfilePage = async () => {
+  const route = getWebRoutes().accountSettings;
+  const candidates = getApiBaseUrlCandidates();
+  let lastError: Error | null = null;
+
+  for (const base of candidates) {
+    try {
+      const res = await fetch(`${base}${route}`, {
+        method: "GET",
+        credentials: "include",
+      });
+
+      if (res.status === 404) continue;
+      if (!res.ok) {
+        lastError = new Error(
+          `Failed loading account settings (${res.status}).`,
+        );
+        continue;
+      }
+
+      const html = await res.text();
+      if (
+        /<title>\s*login/i.test(html) ||
+        /name=["']password["']/i.test(html)
+      ) {
+        throw new Error("Active session required to read profile.");
+      }
+
+      return html;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError ?? new Error("Account settings backend route not found.");
+};
+
+const parseLegacyProfile = (html: string): ProfileDto => {
+  const email =
+    extractInputValue(html, "email") ||
+    extractLabeledValue(html, "Email") ||
+    stripTags(html.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i)?.[0] || "");
+  const fullName =
+    extractInputValue(html, "full_name") ||
+    extractInputValue(html, "name") ||
+    extractLabeledValue(html, "Full Name") ||
+    extractLabeledValue(html, "Name") ||
+    deriveNameFromEmail(email);
+  const phone =
+    extractInputValue(html, "phone") || extractLabeledValue(html, "Phone");
+  const companyName =
+    extractInputValue(html, "company_name") ||
+    extractInputValue(html, "company") ||
+    extractLabeledValue(html, "Company") ||
+    extractLabeledValue(html, "Company Name");
+  const address =
+    extractInputValue(html, "address") || extractLabeledValue(html, "Address");
+  const idValue =
+    extractInputValue(html, "user_id") ||
+    extractInputValue(html, "id") ||
+    extractLabeledValue(html, "User ID") ||
+    extractLabeledValue(html, "ID");
+  const roleValue =
+    html.match(
+      /<option[^>]*selected[^>]*value=["'](customer|technician|administrator|admin|tech)["'][^>]*>/i,
+    )?.[1] ||
+    extractInputValue(html, "role") ||
+    extractLabeledValue(html, "Role");
+  const statusValue =
+    extractLabeledValue(html, "Status") || extractLabeledValue(html, "Active");
+
+  const id = Number(String(idValue).match(/\d+/)?.[0] || "0");
+  if (!email && !fullName && !id) {
+    throw new Error(
+      "Legacy account settings page did not contain profile data.",
+    );
+  }
+
+  return {
+    id,
+    full_name: fullName,
+    email,
+    phone,
+    company_name: companyName,
+    address,
+    role: normalizeProfileRole(roleValue),
+    is_active: statusValue ? /active|enabled|yes/i.test(statusValue) : true,
+  };
+};
+
 const fetchLegacyUsersPage = async () => {
   const routes = getWebRoutes();
   const routeCandidates = Array.from(
@@ -239,25 +415,199 @@ const postLegacyRoleChange = async (
 
 export async function fetchMyProfile() {
   const endpoints = getApiEndpoints();
-  const response = await apiRequest<ProfileDto | SuccessEnvelope<ProfileDto>>(
-    endpoints.accountProfile,
-  );
-  return unwrap(response);
+
+  try {
+    const response = await apiRequest<ProfileDto | SuccessEnvelope<ProfileDto>>(
+      endpoints.accountProfile,
+    );
+    const profile = unwrap(response);
+    if (profile?.email || profile?.full_name || profile?.id) {
+      const rawName = (profile.full_name || "").trim();
+      return {
+        ...profile,
+        role: normalizeProfileRole(profile.role),
+        full_name:
+          (!isRolePlaceholderName(rawName) && rawName) ||
+          deriveNameFromEmail(profile.email || ""),
+      };
+    }
+  } catch {
+    // fall through to legacy profile scraping
+  }
+
+  const html = await fetchLegacyProfilePage();
+  return parseLegacyProfile(html);
 }
+
+const postLegacyProfileUpdate = async (
+  payload: ProfileUpdatePayload,
+): Promise<void> => {
+  const route = getWebRoutes().accountSettings;
+  const candidates = getApiBaseUrlCandidates();
+  let lastError: Error | null = null;
+
+  for (const base of candidates) {
+    try {
+      // GET the settings page first to capture CSRF tokens and any other
+      // hidden session-bound fields the PHP form requires.
+      let hiddenFields: Record<string, string> = {};
+      try {
+        const getRes = await fetch(`${base}${route}`, {
+          method: "GET",
+          credentials: "include",
+        });
+        if (getRes.ok) {
+          const formHtml = await getRes.text();
+          if (
+            !/<title>\s*login/i.test(formHtml) &&
+            !formHtml.toLowerCase().includes("login.php")
+          ) {
+            hiddenFields = extractHiddenInputs(formHtml);
+          }
+        }
+      } catch {
+        // Non-fatal: continue without hidden fields.
+      }
+
+      const body = new URLSearchParams({
+        ...hiddenFields,
+        update_profile: "1",
+        full_name: payload.full_name || "",
+        phone: payload.phone || "",
+        company_name: payload.company_name || "",
+        address: payload.address || "",
+      }).toString();
+
+      const res = await fetch(`${base}${route}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        credentials: "include",
+        body,
+      });
+
+      if (res.status === 404) continue;
+
+      if (!res.ok) {
+        lastError = new Error(`Profile update failed (${res.status}).`);
+        continue;
+      }
+
+      const text = await res.text();
+
+      // If redirected back to login, session expired.
+      if (
+        /<title>\s*login/i.test(text) ||
+        res.url.toLowerCase().includes("login.php")
+      ) {
+        throw new Error("Session expired. Please log in again.");
+      }
+
+      // Look for explicit failure messages from PHP.
+      const phpError = text.match(
+        /failed to update|could not update|error updating|unauthorized/i,
+      )?.[0];
+      if (phpError) {
+        throw new Error(phpError);
+      }
+
+      // Any 200 response that doesn't contain an error is treated as success.
+      return;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /session expired|unauthorized/i.test(error.message)
+      ) {
+        throw error;
+      }
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError ?? new Error("Profile update backend route not found.");
+};
 
 export async function updateMyProfile(payload: ProfileUpdatePayload) {
   const endpoints = getApiEndpoints();
-  return apiRequest<{ success?: boolean; message?: string }>(
-    endpoints.accountUpdateProfile,
-    {
-      method: "POST",
-      body: {
-        update_profile: true,
-        ...payload,
+
+  try {
+    const result = await apiRequest<{ success?: boolean; message?: string }>(
+      endpoints.accountUpdateProfile,
+      {
+        method: "POST",
+        body: {
+          update_profile: true,
+          ...payload,
+        },
       },
-    },
-  );
+    );
+    return result;
+  } catch {
+    // The JSON API endpoint may not be wired up on all backend deployments.
+    // Always fall back to the legacy PHP form POST which uses the standard
+    // session cookie and works on any deployment.
+    await postLegacyProfileUpdate(payload);
+    return { success: true, message: "Profile updated." };
+  }
 }
+
+const postLegacyPasswordChange = async (
+  currentPassword: string,
+  newPassword: string,
+  confirmPassword: string,
+): Promise<void> => {
+  const route = getWebRoutes().accountSettings;
+  const body = new URLSearchParams({
+    change_password: "1",
+    current_password: currentPassword,
+    new_password: newPassword,
+    confirm_password: confirmPassword,
+  }).toString();
+
+  const candidates = getApiBaseUrlCandidates();
+  let lastError: Error | null = null;
+
+  for (const base of candidates) {
+    try {
+      const res = await fetch(`${base}${route}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        credentials: "include",
+        body,
+      });
+
+      if (res.status === 404) continue;
+      if (!res.ok) {
+        lastError = new Error(`Password change failed (${res.status}).`);
+        continue;
+      }
+
+      const text = await res.text();
+      if (
+        /<title>\s*login/i.test(text) ||
+        res.url.toLowerCase().includes("login.php")
+      ) {
+        throw new Error("Session expired. Please log in again.");
+      }
+
+      const phpError = text.match(
+        /incorrect.*password|current password.*wrong|failed to update|could not change|unauthorized/i,
+      )?.[0];
+      if (phpError) throw new Error(phpError);
+
+      return;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        /session expired|unauthorized|incorrect|wrong/i.test(error.message)
+      ) {
+        throw error;
+      }
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError ?? new Error("Password change backend route not found.");
+};
 
 export async function changeMyPassword(
   currentPassword: string,
@@ -265,18 +615,34 @@ export async function changeMyPassword(
   confirmPassword: string,
 ) {
   const endpoints = getApiEndpoints();
-  return apiRequest<{ success?: boolean; message?: string }>(
-    endpoints.accountChangePassword,
-    {
-      method: "POST",
-      body: {
-        change_password: true,
-        current_password: currentPassword,
-        new_password: newPassword,
-        confirm_password: confirmPassword,
+
+  try {
+    return await apiRequest<{ success?: boolean; message?: string }>(
+      endpoints.accountChangePassword,
+      {
+        method: "POST",
+        body: {
+          change_password: true,
+          current_password: currentPassword,
+          new_password: newPassword,
+          confirm_password: confirmPassword,
+        },
       },
-    },
-  );
+    );
+  } catch (apiError) {
+    if (
+      apiError instanceof Error &&
+      /unauthorized|403|401/i.test(apiError.message)
+    ) {
+      await postLegacyPasswordChange(
+        currentPassword,
+        newPassword,
+        confirmPassword,
+      );
+      return { success: true, message: "Password changed." };
+    }
+    throw apiError;
+  }
 }
 
 export async function deactivateSelfAccount() {

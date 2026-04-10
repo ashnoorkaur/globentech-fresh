@@ -4,7 +4,7 @@ import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 type TopStripNavProps = {
   onOpenMenu?: () => void;
-  role?: string;
+  userLabel?: string;
   onProfilePress?: () => void;
   leftMode?: "menu" | "back";
   onLeftPress?: () => void;
@@ -21,7 +21,7 @@ type TopStripNavProps = {
 
 export function TopStripNav({
   onOpenMenu,
-  role,
+  userLabel,
   onProfilePress,
   leftMode = "menu",
   onLeftPress,
@@ -81,9 +81,9 @@ export function TopStripNav({
             size={30}
             color={colors.primary}
           />
-          {rightMode === "profile" && role ? (
+          {rightMode === "profile" && userLabel ? (
             <Text style={[styles.roleLabel, { color: colors.primary }]}>
-              {role}
+              {userLabel}
             </Text>
           ) : null}
         </TouchableOpacity>

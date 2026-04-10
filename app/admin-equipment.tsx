@@ -1,5 +1,5 @@
 import { LinearGradient } from "expo-linear-gradient";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
     Modal,
     Pressable,
@@ -14,6 +14,7 @@ import { RoleContentPage } from "../components/role-content-page";
 import { adminMenu } from "../constants/role-menus";
 import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
     addEquipment,
     fetchEquipmentList,
@@ -58,15 +59,7 @@ export default function AdminEquipmentPage() {
     }
   };
 
-  useEffect(() => {
-    loadEquipment();
-
-    const timer = setInterval(() => {
-      loadEquipment();
-    }, 12000);
-
-    return () => clearInterval(timer);
-  }, []);
+  useFocusedPolling(loadEquipment, { intervalMs: 12000 });
 
   const resetForm = () => {
     setName("");

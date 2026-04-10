@@ -1,16 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useEffect, useMemo, useState } from "react";
-import {
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
-} from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import { fetchCalendarData, type QueueEntry } from "../lib/calendar-api";
 import { useAppTheme } from "../lib/theme";
 
@@ -70,20 +64,17 @@ export default function AdminOrderHistoryPage() {
   const [statusOpen, setStatusOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useState("");
 
-  useEffect(() => {
-    const load = () => {
-      fetchCalendarData()
-        .then((result) => {
-          setRows(result.queue ?? []);
-          setLastUpdated(new Date().toLocaleTimeString());
-        })
-        .catch(() => setRows([]));
-    };
-
-    load();
-    const timer = setInterval(load, 12000);
-    return () => clearInterval(timer);
+  const loadHistory = useCallback(async () => {
+    try {
+      const result = await fetchCalendarData();
+      setRows(result.queue ?? []);
+      setLastUpdated(new Date().toLocaleTimeString());
+    } catch {
+      setRows([]);
+    }
   }, []);
+
+  useFocusedPolling(loadHistory, { intervalMs: 12000 });
 
   const filtered = useMemo(() => {
     return rows.filter((row) => {
@@ -161,7 +152,7 @@ export default function AdminOrderHistoryPage() {
       menuItems={adminMenu}
       dashboardRoute="/admin-dashboard"
     >
-      <ScrollView contentContainerStyle={{ paddingBottom: 8 }}>
+      <View style={{ paddingBottom: 8 }}>
         <View style={styles.summaryRow}>
           <View
             style={[
@@ -616,7 +607,7 @@ export default function AdminOrderHistoryPage() {
             </Text>
           ) : null}
         </View>
-      </ScrollView>
+      </View>
     </RoleContentPage>
   );
 }

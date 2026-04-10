@@ -1,18 +1,18 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import {
-    adminMenu,
-    customerMenu,
-    guestMenu,
-    technicianMenu,
+  adminMenu,
+  customerMenu,
+  guestMenu,
+  technicianMenu,
 } from "../constants/role-menus";
 import type { NotificationCategory } from "../lib/notifications-store";
 import {
-    markAllNotificationsRead,
-    useNotificationsState,
+  markAllNotificationsRead,
+  useNotificationsState,
 } from "../lib/notifications-store";
 import { useSessionState } from "../lib/session-store";
 import { useAppTheme } from "../lib/theme";
@@ -132,7 +132,7 @@ export default function NotificationsPage() {
             </Text>
           </View>
         ) : (
-          <ScrollView contentContainerStyle={{ gap: 10 }}>
+          <View style={{ gap: 10 }}>
             {filteredItems.map((item) => (
               <Pressable
                 key={item.id}
@@ -178,7 +178,7 @@ export default function NotificationsPage() {
                 </Text>
               </Pressable>
             ))}
-          </ScrollView>
+          </View>
         )}
       </View>
     </RoleContentPage>

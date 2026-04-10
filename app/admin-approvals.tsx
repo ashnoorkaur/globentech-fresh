@@ -1,15 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
-import { ScrollView, StyleSheet, Text, View } from "react-native";
+import { useMemo, useState } from "react";
+import { StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
 import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
-    approveOrder,
-    fetchPendingOrders,
-    rejectOrder,
-    type PendingOrderDto,
+  approveOrder,
+  fetchPendingOrders,
+  rejectOrder,
+  type PendingOrderDto,
 } from "../lib/admin-api";
 import { useAppTheme } from "../lib/theme";
 
@@ -72,15 +73,7 @@ export default function AdminApprovalsPage() {
     }
   };
 
-  useEffect(() => {
-    loadQueue();
-
-    const timer = setInterval(() => {
-      loadQueue();
-    }, 15000);
-
-    return () => clearInterval(timer);
-  }, []);
+  useFocusedPolling(loadQueue, { intervalMs: 15000 });
 
   const stats = useMemo(() => {
     const pending = orders.length;
@@ -147,7 +140,7 @@ export default function AdminApprovalsPage() {
       dashboardRoute="/admin-dashboard"
       role="Admin"
     >
-      <ScrollView contentContainerStyle={{ gap: 12, paddingBottom: 8 }}>
+      <View style={{ gap: 12, paddingBottom: 8 }}>
         <View style={styles.summaryRow}>
           <View
             style={[
@@ -463,7 +456,7 @@ export default function AdminApprovalsPage() {
             {loading ? "Loading..." : "Refresh"}
           </Text>
         </GradientButton>
-      </ScrollView>
+      </View>
       {feedback.modal}
       {confirm.modal}
     </RoleContentPage>

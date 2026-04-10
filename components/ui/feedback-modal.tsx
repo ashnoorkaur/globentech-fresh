@@ -8,6 +8,7 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import { useAppTheme } from "../../lib/theme";
 
 type FeedbackVariant = "info" | "success" | "error";
 
@@ -53,6 +54,7 @@ export function FeedbackModal({
   onCancel,
   onConfirm,
 }: FeedbackModalProps) {
+  const theme = useAppTheme();
   const cfg = variantConfig[variant];
   const cardAnim = useRef(new Animated.Value(0)).current;
 
@@ -86,6 +88,10 @@ export function FeedbackModal({
     outputRange: [16, 0],
   });
 
+  const overlayBg = theme.isDark
+    ? "rgba(15, 23, 42, 0.7)"
+    : "rgba(15, 23, 42, 0.5)";
+
   return (
     <Modal
       transparent
@@ -93,7 +99,7 @@ export function FeedbackModal({
       visible={visible}
       onRequestClose={onConfirm}
     >
-      <View style={styles.overlay}>
+      <View style={[styles.overlay, { backgroundColor: overlayBg }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onConfirm} />
 
         <Animated.View
@@ -102,6 +108,8 @@ export function FeedbackModal({
             {
               opacity,
               transform: [{ scale }, { translateY }],
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border,
             },
           ]}
         >
@@ -111,22 +119,44 @@ export function FeedbackModal({
             </Text>
           </View>
 
-          <Text style={styles.title}>{title}</Text>
-          <Text style={styles.message}>{message}</Text>
+          <Text style={[styles.title, { color: theme.colors.text }]}>
+            {title}
+          </Text>
+          <Text style={[styles.message, { color: theme.colors.textMuted }]}>
+            {message}
+          </Text>
 
           <View style={styles.actionsRow}>
             {!!cancelText && !!onCancel && (
               <TouchableOpacity
-                style={styles.secondaryButton}
+                style={[
+                  styles.secondaryButton,
+                  {
+                    borderColor: theme.colors.border,
+                    backgroundColor: theme.isDark
+                      ? theme.colors.surfaceMuted
+                      : "#F8FAFD",
+                  },
+                ]}
                 onPress={onCancel}
               >
-                <Text style={styles.secondaryButtonText}>{cancelText}</Text>
+                <Text
+                  style={[
+                    styles.secondaryButtonText,
+                    { color: theme.colors.textSecondary },
+                  ]}
+                >
+                  {cancelText}
+                </Text>
               </TouchableOpacity>
             )}
 
             <TouchableOpacity
               style={[
                 styles.button,
+                {
+                  backgroundColor: theme.colors.primary,
+                },
                 cancelText ? styles.buttonSplit : styles.buttonFull,
               ]}
               onPress={onConfirm}
@@ -143,7 +173,6 @@ export function FeedbackModal({
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.5)",
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
@@ -151,11 +180,9 @@ const styles = StyleSheet.create({
   dialog: {
     width: "100%",
     maxWidth: 360,
-    backgroundColor: "#FFFFFF",
     borderRadius: 22,
     padding: 22,
     borderWidth: 1,
-    borderColor: "#DCE7FA",
     shadowColor: "#0F172A",
     shadowOpacity: 0.25,
     shadowRadius: 24,
@@ -177,17 +204,14 @@ const styles = StyleSheet.create({
   title: {
     fontSize: 20,
     fontWeight: "800",
-    color: "#0F172A",
     marginBottom: 8,
   },
   message: {
     fontSize: 14,
     lineHeight: 21,
-    color: "#475569",
     marginBottom: 20,
   },
   button: {
-    backgroundColor: "#1E3A8A",
     borderRadius: 12,
     paddingVertical: 12,
     alignItems: "center",
@@ -212,14 +236,11 @@ const styles = StyleSheet.create({
     flex: 1,
     borderRadius: 12,
     borderWidth: 1,
-    borderColor: "#CBD8EF",
-    backgroundColor: "#F8FAFD",
     alignItems: "center",
     justifyContent: "center",
     paddingVertical: 12,
   },
   secondaryButtonText: {
-    color: "#334155",
     fontSize: 14,
     fontWeight: "600",
   },

@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Modal,
   Pressable,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -12,6 +11,7 @@ import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
   adminActivateUser,
   adminChangeRole,
@@ -24,6 +24,17 @@ import { useAppTheme } from "../lib/theme";
 
 const roles: ProfileDto["role"][] = ["customer", "technician", "administrator"];
 type ManagedUser = ProfileDto & { last_login?: string };
+
+const normalizeManagedRole = (role?: string): ProfileDto["role"] => {
+  const value = (role || "").trim().toLowerCase();
+  if (value === "administrator" || value === "admin") {
+    return "administrator";
+  }
+  if (value === "technician" || value === "tech") {
+    return "technician";
+  }
+  return "customer";
+};
 
 const roleLabel = (role: ProfileDto["role"]) => {
   if (role === "administrator") return "Admin";
@@ -77,7 +88,7 @@ export default function AdminUsersPage() {
             phone: row.phone || "",
             company_name: row.company_name || "",
             address: row.address || "",
-            role: row.role,
+            role: normalizeManagedRole(row.role),
             is_active: row.is_active,
           });
         });
@@ -94,7 +105,7 @@ export default function AdminUsersPage() {
             phone: existing?.phone || "",
             company_name: row.company_name || existing?.company_name || "",
             address: existing?.address || "",
-            role: row.role || existing?.role || "customer",
+            role: normalizeManagedRole(row.role || existing?.role),
             is_active: row.is_active,
             last_login: row.last_login,
           });
@@ -123,15 +134,7 @@ export default function AdminUsersPage() {
     }
   }, []);
 
-  useEffect(() => {
-    loadUsers();
-
-    const timer = setInterval(() => {
-      loadUsers();
-    }, 20000);
-
-    return () => clearInterval(timer);
-  }, [loadUsers]);
+  useFocusedPolling(loadUsers, { intervalMs: 25000 });
 
   const filteredUsers = useMemo(() => {
     let result = users;
@@ -142,13 +145,16 @@ export default function AdminUsersPage() {
       result = result.filter((user) => {
         const name = (user.full_name || "").toLowerCase();
         const email = (user.email || "").toLowerCase();
-        return name.includes(q) || email.includes(q);
+        const id = String(user.id || "").toLowerCase();
+        return name.includes(q) || email.includes(q) || id.includes(q);
       });
     }
 
     // Apply role filter
     if (roleFilter !== "all") {
-      result = result.filter((user) => user.role === roleFilter);
+      result = result.filter(
+        (user) => normalizeManagedRole(user.role) === roleFilter,
+      );
     }
 
     // Apply status filter
@@ -231,7 +237,7 @@ export default function AdminUsersPage() {
           <TextInput
             value={search}
             onChangeText={setSearch}
-            placeholder="Search users by name or email"
+            placeholder="Search users by ID, name, or email"
             placeholderTextColor={theme.colors.textMuted}
             style={[
               styles.input,
@@ -488,169 +494,179 @@ export default function AdminUsersPage() {
         )}
 
         {/* Users List */}
-        <ScrollView
-          contentContainerStyle={styles.listContainer}
-          showsVerticalScrollIndicator={false}
-          scrollEventThrottle={16}
-        >
-          {filteredUsers.length === 0 && !errorText ? (
-            <View style={styles.emptyState}>
-              <Text
+        {filteredUsers.length === 0 && !errorText ? (
+          <View style={styles.emptyState}>
+            <Text
+              style={[styles.emptyStateText, { color: theme.colors.textMuted }]}
+            >
+              No users found
+            </Text>
+          </View>
+        ) : null}
+        <View style={styles.usersListWrap}>
+          {filteredUsers.map((user) => (
+            <View
+              key={String(user.id)}
+              style={[
+                styles.userCard,
+                {
+                  backgroundColor: theme.colors.surface,
+                  borderColor: theme.colors.border,
+                  shadowColor: theme.colors.text,
+                },
+              ]}
+            >
+              {/* User Profile Section */}
+              <View style={styles.userProfile}>
+                <View style={styles.userDetails}>
+                  <Text
+                    style={[styles.userName, { color: theme.colors.text }]}
+                    numberOfLines={1}
+                  >
+                    {user.full_name}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.userEmail,
+                      { color: theme.colors.textMuted },
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {user.email}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.statusIndicator,
+                    {
+                      backgroundColor: user.is_active
+                        ? theme.colors.success
+                        : theme.colors.danger,
+                    },
+                  ]}
+                />
+              </View>
+
+              {/* User Meta Information */}
+              <View style={styles.metaInfo}>
+                <View
+                  style={[
+                    styles.roleTag,
+                    { backgroundColor: theme.colors.primarySoft },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.roleTagText,
+                      { color: theme.colors.primary },
+                    ]}
+                  >
+                    {roleLabel(user.role)}
+                  </Text>
+                </View>
+                <View
+                  style={[
+                    styles.idTag,
+                    {
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.surfaceMuted,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.idTagText,
+                      { color: theme.colors.textMuted },
+                    ]}
+                  >
+                    ID: {user.id}
+                  </Text>
+                </View>
+                {user.last_login && (
+                  <Text
+                    style={[
+                      styles.lastLoginText,
+                      { color: theme.colors.textMuted },
+                    ]}
+                  >
+                    {new Date(user.last_login).toLocaleDateString(undefined, {
+                      month: "short",
+                      day: "numeric",
+                      year: "2-digit",
+                    })}{" "}
+                    {new Date(user.last_login).toLocaleTimeString(undefined, {
+                      hour: "2-digit",
+                      minute: "2-digit",
+                      second: "2-digit",
+                    })}
+                  </Text>
+                )}
+              </View>
+
+              {/* Role Assignment Dropdown */}
+              <View style={styles.roleSection}>
+                <Text
+                  style={[styles.sectionLabel, { color: theme.colors.text }]}
+                >
+                  Role Assignment
+                </Text>
+                <Pressable
+                  onPress={() => {
+                    setRolePickerId(user.id);
+                    setRolePickerVisible(true);
+                  }}
+                  style={[
+                    styles.roleDropdown,
+                    {
+                      backgroundColor: theme.colors.inputBg,
+                      borderColor: theme.colors.border,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.roleDropdownText,
+                      { color: theme.colors.text },
+                    ]}
+                  >
+                    {roleLabel(user.role)}
+                  </Text>
+                  <Text
+                    style={[
+                      styles.dropdownArrow,
+                      { color: theme.colors.textMuted },
+                    ]}
+                  >
+                    ▼
+                  </Text>
+                </Pressable>
+                <Text
+                  style={[styles.roleNote, { color: theme.colors.textMuted }]}
+                >
+                  Only administrators can modify user roles
+                </Text>
+              </View>
+
+              {/* Account Control */}
+              <Pressable
+                onPress={() => setActive(user)}
                 style={[
-                  styles.emptyStateText,
-                  { color: theme.colors.textMuted },
-                ]}
-              >
-                No users found
-              </Text>
-            </View>
-          ) : (
-            filteredUsers.map((user) => (
-              <View
-                key={user.id}
-                style={[
-                  styles.userCard,
+                  styles.actionBtn,
                   {
-                    backgroundColor: theme.colors.surface,
-                    borderColor: theme.colors.border,
+                    backgroundColor: user.is_active
+                      ? theme.colors.danger
+                      : theme.colors.success,
                     shadowColor: theme.colors.text,
                   },
                 ]}
               >
-                {/* User Profile Section */}
-                <View style={styles.userProfile}>
-                  <View style={styles.userDetails}>
-                    <Text
-                      style={[styles.userName, { color: theme.colors.text }]}
-                      numberOfLines={1}
-                    >
-                      {user.full_name}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.userEmail,
-                        { color: theme.colors.textMuted },
-                      ]}
-                      numberOfLines={1}
-                    >
-                      {user.email}
-                    </Text>
-                  </View>
-                  <View
-                    style={[
-                      styles.statusIndicator,
-                      {
-                        backgroundColor: user.is_active
-                          ? theme.colors.success
-                          : theme.colors.danger,
-                      },
-                    ]}
-                  />
-                </View>
-
-                {/* User Meta Information */}
-                <View style={styles.metaInfo}>
-                  <View
-                    style={[
-                      styles.roleTag,
-                      { backgroundColor: theme.colors.primarySoft },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.roleTagText,
-                        { color: theme.colors.primary },
-                      ]}
-                    >
-                      {roleLabel(user.role)}
-                    </Text>
-                  </View>
-                  {user.last_login && (
-                    <Text
-                      style={[
-                        styles.lastLoginText,
-                        { color: theme.colors.textMuted },
-                      ]}
-                    >
-                      {new Date(user.last_login).toLocaleDateString(undefined, {
-                        month: "short",
-                        day: "numeric",
-                        year: "2-digit",
-                      })}{" "}
-                      {new Date(user.last_login).toLocaleTimeString(undefined, {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                        second: "2-digit",
-                      })}
-                    </Text>
-                  )}
-                </View>
-
-                {/* Role Assignment Dropdown */}
-                <View style={styles.roleSection}>
-                  <Text
-                    style={[styles.sectionLabel, { color: theme.colors.text }]}
-                  >
-                    Role Assignment
-                  </Text>
-                  <Pressable
-                    onPress={() => {
-                      setRolePickerId(user.id);
-                      setRolePickerVisible(true);
-                    }}
-                    style={[
-                      styles.roleDropdown,
-                      {
-                        backgroundColor: theme.colors.inputBg,
-                        borderColor: theme.colors.border,
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.roleDropdownText,
-                        { color: theme.colors.text },
-                      ]}
-                    >
-                      {roleLabel(user.role)}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.dropdownArrow,
-                        { color: theme.colors.textMuted },
-                      ]}
-                    >
-                      ▼
-                    </Text>
-                  </Pressable>
-                  <Text
-                    style={[styles.roleNote, { color: theme.colors.textMuted }]}
-                  >
-                    Only administrators can modify user roles
-                  </Text>
-                </View>
-
-                {/* Account Control */}
-                <Pressable
-                  onPress={() => setActive(user)}
-                  style={[
-                    styles.actionBtn,
-                    {
-                      backgroundColor: user.is_active
-                        ? theme.colors.danger
-                        : theme.colors.success,
-                      shadowColor: theme.colors.text,
-                    },
-                  ]}
-                >
-                  <Text style={styles.actionBtnText}>
-                    {user.is_active ? "Disable" : "Enable"}
-                  </Text>
-                </Pressable>
-              </View>
-            ))
-          )}
-        </ScrollView>
+                <Text style={styles.actionBtnText}>
+                  {user.is_active ? "Disable" : "Enable"}
+                </Text>
+              </Pressable>
+            </View>
+          ))}
+        </View>
 
         {/* Role Picker Modal */}
         <Modal
@@ -712,7 +728,6 @@ export default function AdminUsersPage() {
 
 const styles = StyleSheet.create({
   container: {
-    flex: 1,
     paddingHorizontal: 16,
     paddingVertical: 16,
   },
@@ -886,9 +901,9 @@ const styles = StyleSheet.create({
   },
 
   // List Container
-  listContainer: {
-    paddingBottom: 24,
+  usersListWrap: {
     gap: 12,
+    paddingBottom: 8,
   },
   emptyState: {
     alignItems: "center",
@@ -949,6 +964,16 @@ const styles = StyleSheet.create({
     borderRadius: 6,
   },
   roleTagText: {
+    fontSize: 11,
+    fontWeight: "600",
+  },
+  idTag: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  idTagText: {
     fontSize: 11,
     fontWeight: "600",
   },

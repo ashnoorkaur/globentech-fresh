@@ -25,11 +25,20 @@ let state: NotificationsState = {
   items: [],
 };
 
+const NOTIFICATION_SYNC_INTERVAL_MS = 25000;
+
 let previousByRole: Record<string, Record<string, string>> = {
   administrator: {},
   customer: {},
   technician: {},
 };
+
+let lastSyncAtByRole: Partial<
+  Record<"administrator" | "customer" | "technician", number>
+> = {};
+let inFlightSyncByRole: Partial<
+  Record<"administrator" | "customer" | "technician", Promise<void>>
+> = {};
 
 let previousContactNotificationIds: Record<string, boolean> = {};
 
@@ -42,9 +51,19 @@ let pendingAdminContactAlerts: Array<{
 }> = [];
 
 const listeners = new Set<() => void>();
+let emitScheduled = false;
 
 const emit = () => {
   listeners.forEach((fn) => fn());
+};
+
+const scheduleEmit = () => {
+  if (emitScheduled) return;
+  emitScheduled = true;
+  setTimeout(() => {
+    emitScheduled = false;
+    emit();
+  }, 0);
 };
 
 const subscribe = (listener: () => void) => {
@@ -70,7 +89,14 @@ const pushNotification = (
     read: false,
   };
   state = { items: [item, ...state.items].slice(0, 80) };
-  emit();
+  scheduleEmit();
+};
+
+const toRoleKey = (role?: string) => {
+  if (role === "administrator") return "administrator";
+  if (role === "customer") return "customer";
+  if (role === "technician") return "technician";
+  return undefined;
 };
 
 const flushAdminContactAlerts = () => {
@@ -175,38 +201,49 @@ const syncWithSnapshot = (
 };
 
 export async function syncNotificationsForRole(role?: string) {
-  if (!role) return;
+  const roleKey = toRoleKey(role);
+  if (!roleKey) return;
 
-  try {
-    if (role === "administrator") {
-      flushAdminContactAlerts();
-      await syncAdminContactNotificationsFromBackend();
-      const rows = await fetchPendingOrders();
-      syncWithSnapshot(
-        "administrator",
-        rows.map((r) => ({
-          id: r.id,
-          status: "pending",
-          order_number: r.order_number,
-        })),
-      );
-      return;
-    }
+  const inFlight = inFlightSyncByRole[roleKey];
+  if (inFlight) {
+    return inFlight;
+  }
 
-    if (role === "customer") {
-      const rows = await fetchCustomerMyOrders();
-      syncWithSnapshot(
-        "customer",
-        rows.map((r) => ({
-          id: r.id,
-          status: normalizeOrderStatusForCompare(r.status),
-          order_number: r.order_number,
-        })),
-      );
-      return;
-    }
+  const lastSyncAt = lastSyncAtByRole[roleKey] ?? 0;
+  if (Date.now() - lastSyncAt < NOTIFICATION_SYNC_INTERVAL_MS) {
+    return;
+  }
 
-    if (role === "technician") {
+  const syncTask = (async () => {
+    try {
+      if (roleKey === "administrator") {
+        flushAdminContactAlerts();
+        await syncAdminContactNotificationsFromBackend();
+        const rows = await fetchPendingOrders();
+        syncWithSnapshot(
+          "administrator",
+          rows.map((r) => ({
+            id: r.id,
+            status: "pending",
+            order_number: r.order_number,
+          })),
+        );
+        return;
+      }
+
+      if (roleKey === "customer") {
+        const rows = await fetchCustomerMyOrders();
+        syncWithSnapshot(
+          "customer",
+          rows.map((r) => ({
+            id: r.id,
+            status: normalizeOrderStatusForCompare(r.status),
+            order_number: r.order_number,
+          })),
+        );
+        return;
+      }
+
       const calendar = await fetchTechnicianWorkQueue();
       const rows = calendar.queue ?? [];
       syncWithSnapshot(
@@ -217,10 +254,16 @@ export async function syncNotificationsForRole(role?: string) {
           order_number: r.order_number,
         })),
       );
+    } catch {
+      // Silent fallback for notification polling.
+    } finally {
+      lastSyncAtByRole[roleKey] = Date.now();
+      delete inFlightSyncByRole[roleKey];
     }
-  } catch {
-    // Silent fallback for notification polling.
-  }
+  })();
+
+  inFlightSyncByRole[roleKey] = syncTask;
+  return syncTask;
 }
 
 export function queueAdminContactAlert(input: {
@@ -252,6 +295,8 @@ export function clearNotifications() {
     customer: {},
     technician: {},
   };
+  lastSyncAtByRole = {};
+  inFlightSyncByRole = {};
   previousContactNotificationIds = {};
   emit();
 }

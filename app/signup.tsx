@@ -1,4 +1,3 @@
-import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
 import {
@@ -10,6 +9,7 @@ import {
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { PasswordField } from "../components/ui/password-field";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
 import { registerAccount } from "../lib/auth-api";
 import { useAppTheme } from "../lib/theme";
@@ -23,8 +23,6 @@ export default function SignupPage() {
   const [address, setAddress] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const feedback = useFeedbackModal();
 
@@ -288,65 +286,19 @@ export default function SignupPage() {
               Security
             </Text>
 
-            <View
-              style={[
-                styles.passwordWrap,
-                {
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
-                },
-              ]}
-            >
-              <TextInput
-                value={password}
-                onChangeText={setPassword}
-                placeholder="Password* (6-35)"
-                placeholderTextColor={theme.colors.textMuted}
-                style={[styles.passwordInput, { color: theme.colors.text }]}
-                secureTextEntry={!showPassword}
-                maxLength={35}
-              />
-              <Pressable
-                onPress={() => setShowPassword((v) => !v)}
-                style={styles.eyeBtn}
-              >
-                <Ionicons
-                  name={showPassword ? "eye-off-outline" : "eye-outline"}
-                  size={18}
-                  color={theme.colors.textMuted}
-                />
-              </Pressable>
-            </View>
+            <PasswordField
+              value={password}
+              onChangeText={setPassword}
+              placeholder="Password* (6-35)"
+              maxLength={35}
+            />
 
-            <View
-              style={[
-                styles.passwordWrap,
-                {
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
-                },
-              ]}
-            >
-              <TextInput
-                value={confirmPassword}
-                onChangeText={setConfirmPassword}
-                placeholder="Confirm Password*"
-                placeholderTextColor={theme.colors.textMuted}
-                style={[styles.passwordInput, { color: theme.colors.text }]}
-                secureTextEntry={!showConfirmPassword}
-                maxLength={35}
-              />
-              <Pressable
-                onPress={() => setShowConfirmPassword((v) => !v)}
-                style={styles.eyeBtn}
-              >
-                <Ionicons
-                  name={showConfirmPassword ? "eye-off-outline" : "eye-outline"}
-                  size={18}
-                  color={theme.colors.textMuted}
-                />
-              </Pressable>
-            </View>
+            <PasswordField
+              value={confirmPassword}
+              onChangeText={setConfirmPassword}
+              placeholder="Confirm Password*"
+              maxLength={35}
+            />
 
             <Text style={[styles.hint, { color: theme.colors.textMuted }]}>
               Passwords must match and be 6-35 characters.
@@ -420,21 +372,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
   textarea: { minHeight: 70, textAlignVertical: "top" },
-  passwordWrap: {
-    borderWidth: 1,
-    borderRadius: 12,
-    minHeight: 44,
-    flexDirection: "row",
-    alignItems: "center",
-    paddingLeft: 12,
-  },
-  passwordInput: { flex: 1, fontSize: 14, paddingVertical: 10 },
-  eyeBtn: {
-    width: 42,
-    height: 42,
-    alignItems: "center",
-    justifyContent: "center",
-  },
   hint: { fontSize: 11, fontWeight: "700", marginTop: -2 },
   registerBtn: {
     borderRadius: 12,

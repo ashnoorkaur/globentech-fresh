@@ -8,10 +8,10 @@ import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { logoutSession } from "../lib/auth-api";
 import { clearChatSession } from "../lib/chatbot-session";
 import {
-    clearNotifications,
-    getUnreadNotificationsCount,
-    syncNotificationsForRole,
-    useNotificationsState,
+  clearNotifications,
+  getUnreadNotificationsCount,
+  syncNotificationsForRole,
+  useNotificationsState,
 } from "../lib/notifications-store";
 import { setSessionUser, useSessionState } from "../lib/session-store";
 import { useAppTheme } from "../lib/theme";
@@ -27,6 +27,7 @@ type RoleContentPageProps = {
   role?: string;
   leftActionMode?: "menu" | "back";
   onLeftActionPress?: () => void;
+  scrollable?: boolean;
   children?: ReactNode;
 };
 
@@ -39,6 +40,7 @@ export function RoleContentPage({
   role,
   leftActionMode = "menu",
   onLeftActionPress,
+  scrollable = true,
   children,
 }: RoleContentPageProps) {
   const theme = useAppTheme();
@@ -47,6 +49,23 @@ export function RoleContentPage({
   const insets = useSafeAreaInsets();
   const [menuVisible, setMenuVisible] = useState(false);
   const confirm = useConfirmModal();
+
+  const normalizedRoleLabel = useMemo(() => {
+    const rawRole = (session.user?.role || "").toLowerCase();
+    if (rawRole === "administrator" || rawRole === "admin") return "Admin";
+    if (rawRole === "technician" || rawRole === "tech") return "Technician";
+    if (rawRole === "customer") return "Customer";
+    return role || "Guest";
+  }, [role, session.user?.role]);
+
+  const personDisplayLabel = useMemo(() => {
+    const name = session.user?.full_name?.trim();
+    if (name) {
+      const [firstName] = name.split(/\s+/).filter(Boolean);
+      if (firstName) return firstName;
+    }
+    return normalizedRoleLabel;
+  }, [normalizedRoleLabel, session.user?.full_name]);
 
   const unreadCount = useMemo(() => {
     const storeCount = getUnreadNotificationsCount();
@@ -59,7 +78,7 @@ export function RoleContentPage({
     void syncNotificationsForRole(roleValue);
     const timer = setInterval(() => {
       void syncNotificationsForRole(roleValue);
-    }, 12000);
+    }, 30000);
 
     return () => clearInterval(timer);
   }, [session.user?.role]);
@@ -125,7 +144,7 @@ export function RoleContentPage({
 
       <TopStripNav
         onOpenMenu={() => setMenuVisible(true)}
-        role={role}
+        userLabel={personDisplayLabel}
         leftMode={leftActionMode}
         onLeftPress={
           onLeftActionPress ??
@@ -136,82 +155,164 @@ export function RoleContentPage({
         colors={theme.colors}
       />
 
-      <ScrollView contentContainerStyle={styles.content} style={styles.scroll}>
-        <View
-          style={[
-            styles.heroCard,
-            {
-              backgroundColor: theme.colors.surface,
-              borderColor: theme.colors.border,
-            },
-          ]}
+      {scrollable ? (
+        <ScrollView
+          contentContainerStyle={styles.content}
+          style={styles.scroll}
         >
-          <View style={[styles.heroAccent]} />
-          {showHeaderBack ? (
-            <Pressable
-              onPress={() => router.push(dashboardRoute)}
-              style={styles.eyebrowRow}
-            >
-              <View
-                style={[
-                  styles.backChip,
-                  {
-                    borderColor: theme.colors.border,
-                    backgroundColor: theme.colors.surfaceMuted,
-                  },
-                ]}
+          <View
+            style={[
+              styles.heroCard,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
+            <View style={[styles.heroAccent]} />
+            {showHeaderBack ? (
+              <Pressable
+                onPress={() => router.push(dashboardRoute)}
+                style={styles.eyebrowRow}
               >
-                <Ionicons
-                  name="arrow-back"
-                  size={14}
-                  color={theme.colors.primary}
-                />
-              </View>
+                <View
+                  style={[
+                    styles.backChip,
+                    {
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.surfaceMuted,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="arrow-back"
+                    size={14}
+                    color={theme.colors.primary}
+                  />
+                </View>
+                <Text style={[styles.eyebrow, { color: theme.colors.primary }]}>
+                  GlobenTech
+                </Text>
+              </Pressable>
+            ) : (
               <Text style={[styles.eyebrow, { color: theme.colors.primary }]}>
                 GlobenTech
               </Text>
-            </Pressable>
-          ) : (
-            <Text style={[styles.eyebrow, { color: theme.colors.primary }]}>
-              GlobenTech
+            )}
+            <View style={styles.titleRow}>
+              <Text style={[styles.title, { color: theme.colors.text }]}>
+                {title}
+              </Text>
+              {activeKey === "dashboard" ? (
+                <Pressable
+                  onPress={() => router.push("/notifications")}
+                  style={[
+                    styles.titleBell,
+                    {
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.surfaceMuted,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="notifications-outline"
+                    size={20}
+                    color={theme.colors.primary}
+                  />
+                  {unreadCount > 0 ? (
+                    <View style={styles.titleBadge}>
+                      <Text style={styles.titleBadgeText}>
+                        {unreadCount > 99 ? "99+" : String(unreadCount)}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+              ) : null}
+            </View>
+            <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
+              {subtitle}
             </Text>
-          )}
-          <View style={styles.titleRow}>
-            <Text style={[styles.title, { color: theme.colors.text }]}>
-              {title}
-            </Text>
-            {activeKey === "dashboard" ? (
-              <Pressable
-                onPress={() => router.push("/notifications")}
-                style={[
-                  styles.titleBell,
-                  {
-                    borderColor: theme.colors.border,
-                    backgroundColor: theme.colors.surfaceMuted,
-                  },
-                ]}
-              >
-                <Ionicons
-                  name="notifications-outline"
-                  size={20}
-                  color={theme.colors.primary}
-                />
-                {unreadCount > 0 ? (
-                  <View style={styles.titleBadge}>
-                    <Text style={styles.titleBadgeText}>
-                      {unreadCount > 99 ? "99+" : String(unreadCount)}
-                    </Text>
-                  </View>
-                ) : null}
-              </Pressable>
-            ) : null}
           </View>
-          <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
-            {subtitle}
-          </Text>
+          {children}
+        </ScrollView>
+      ) : (
+        <View style={styles.staticContent}>
+          <View
+            style={[
+              styles.heroCard,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
+            <View style={[styles.heroAccent]} />
+            {showHeaderBack ? (
+              <Pressable
+                onPress={() => router.push(dashboardRoute)}
+                style={styles.eyebrowRow}
+              >
+                <View
+                  style={[
+                    styles.backChip,
+                    {
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.surfaceMuted,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="arrow-back"
+                    size={14}
+                    color={theme.colors.primary}
+                  />
+                </View>
+                <Text style={[styles.eyebrow, { color: theme.colors.primary }]}>
+                  GlobenTech
+                </Text>
+              </Pressable>
+            ) : (
+              <Text style={[styles.eyebrow, { color: theme.colors.primary }]}>
+                GlobenTech
+              </Text>
+            )}
+            <View style={styles.titleRow}>
+              <Text style={[styles.title, { color: theme.colors.text }]}>
+                {title}
+              </Text>
+              {activeKey === "dashboard" ? (
+                <Pressable
+                  onPress={() => router.push("/notifications")}
+                  style={[
+                    styles.titleBell,
+                    {
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.surfaceMuted,
+                    },
+                  ]}
+                >
+                  <Ionicons
+                    name="notifications-outline"
+                    size={20}
+                    color={theme.colors.primary}
+                  />
+                  {unreadCount > 0 ? (
+                    <View style={styles.titleBadge}>
+                      <Text style={styles.titleBadgeText}>
+                        {unreadCount > 99 ? "99+" : String(unreadCount)}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+              ) : null}
+            </View>
+            <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
+              {subtitle}
+            </Text>
+          </View>
+          <View style={styles.staticBody}>{children}</View>
         </View>
-        {children}
-      </ScrollView>
+      )}
 
       {leftActionMode === "menu" ? (
         <RoleMenuModal
@@ -219,9 +320,12 @@ export function RoleContentPage({
           onClose={() => setMenuVisible(false)}
           items={menuItems}
           activeKey={activeKey}
+          isDark={theme.isDark}
           colors={theme.colors}
           onLogout={role && role !== "Guest" ? onLogout : undefined}
-          role={role}
+          role={normalizedRoleLabel}
+          displayName={personDisplayLabel}
+          onProfilePress={() => router.push("/profile")}
         />
       ) : null}
 
@@ -261,6 +365,8 @@ const styles = StyleSheet.create({
   },
   scroll: { flex: 1 },
   content: { padding: 20, paddingBottom: 32 },
+  staticContent: { flex: 1, padding: 20, paddingBottom: 32 },
+  staticBody: { flex: 1 },
   heroCard: {
     borderWidth: 1,
     borderRadius: 26,

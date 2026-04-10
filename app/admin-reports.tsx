@@ -1,13 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useMemo, useState } from "react";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
-    generateReport,
-    type ReportRequest,
-    type ReportResponse,
+  generateReport,
+  type ReportRequest,
+  type ReportResponse,
 } from "../lib/admin-api";
 import { useAppTheme } from "../lib/theme";
 
@@ -84,17 +85,7 @@ export default function AdminReportsPage() {
     }
   }, [type, option]);
 
-  useEffect(() => {
-    runReport();
-  }, [runReport]);
-
-  useEffect(() => {
-    const timer = setInterval(() => {
-      runReport();
-    }, 10000);
-
-    return () => clearInterval(timer);
-  }, [runReport]);
+  useFocusedPolling(runReport, { intervalMs: 30000 });
 
   const reportRows = useMemo(() => {
     if (!report || typeof report !== "object")
@@ -161,7 +152,7 @@ export default function AdminReportsPage() {
       dashboardRoute="/admin-dashboard"
       role="Admin"
     >
-      <ScrollView contentContainerStyle={{ gap: 12, paddingBottom: 8 }}>
+      <View style={{ gap: 12, paddingBottom: 8 }}>
         <View
           style={[
             styles.liveStrip,
@@ -404,7 +395,7 @@ export default function AdminReportsPage() {
             </View>
           ))}
         </View>
-      </ScrollView>
+      </View>
     </RoleContentPage>
   );
 }

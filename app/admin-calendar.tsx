@@ -1,13 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
-  fetchCalendarData,
-  type EquipmentRow,
-  type QueueEntry,
+    fetchCalendarData,
+    type EquipmentRow,
+    type QueueEntry,
 } from "../lib/calendar-api";
 import { useAppTheme } from "../lib/theme";
 
@@ -48,11 +49,7 @@ export default function AdminCalendarPage() {
     }
   }, []);
 
-  useEffect(() => {
-    loadCalendar();
-    const timer = setInterval(loadCalendar, 12000);
-    return () => clearInterval(timer);
-  }, [loadCalendar]);
+  useFocusedPolling(loadCalendar, { intervalMs: 18000 });
 
   const statusCounts = useMemo(() => {
     let pending = 0;

@@ -1,17 +1,18 @@
 import { router } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-    ActivityIndicator,
-    Pressable,
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  View,
 } from "react-native";
 import { WebView } from "react-native-webview";
 import type { WebViewErrorEvent } from "react-native-webview/lib/WebViewTypes";
 import { MenuItem } from "../constants/role-menus";
 import { getApiBaseUrl } from "../lib/api-client";
+import { useSessionState } from "../lib/session-store";
 import { useAppTheme } from "../lib/theme";
 import { getWebRoutes } from "../lib/web-routes";
 import { RoleMenuModal } from "./role-menu-modal";
@@ -132,6 +133,10 @@ const NAVIGATION_BRIDGE_JS = `
       logPageDebugInfo();
     };
     
+    if (typeof window.__globentechCleanup === 'function') {
+      try { window.__globentechCleanup(); } catch (e) {}
+    }
+
     processLinks();
     hideWebsiteChrome();
     document.addEventListener('DOMContentLoaded', processLinks);
@@ -142,6 +147,16 @@ const NAVIGATION_BRIDGE_JS = `
     document.addEventListener('load', logPageDebugInfo);
     var observer = new MutationObserver(processLinks);
     observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
+
+    window.__globentechCleanup = function() {
+      document.removeEventListener('DOMContentLoaded', processLinks);
+      document.removeEventListener('load', processLinks);
+      document.removeEventListener('DOMContentLoaded', hideWebsiteChrome);
+      document.removeEventListener('load', hideWebsiteChrome);
+      document.removeEventListener('DOMContentLoaded', logPageDebugInfo);
+      document.removeEventListener('load', logPageDebugInfo);
+      try { observer.disconnect(); } catch (e) {}
+    };
 
     var reportPageState = function() {
       try {
@@ -298,6 +313,7 @@ export function PhpWebViewPage({
   showAppShell = true,
 }: PhpWebViewPageProps) {
   const theme = useAppTheme();
+  const session = useSessionState();
   const webViewRef = useRef<WebView>(null);
   const hasTriedFallbackRef = useRef(false);
   const hasHandledFatalContentRef = useRef(false);
@@ -314,6 +330,23 @@ export function PhpWebViewPage({
     [path, runtimeBaseUrl],
   );
   const [currentUri, setCurrentUri] = useState(sourceUri);
+
+  const normalizedRoleLabel = useMemo(() => {
+    const rawRole = (session.user?.role || "").toLowerCase();
+    if (rawRole === "administrator" || rawRole === "admin") return "Admin";
+    if (rawRole === "technician" || rawRole === "tech") return "Technician";
+    if (rawRole === "customer") return "Customer";
+    return role || "Guest";
+  }, [role, session.user?.role]);
+
+  const personDisplayLabel = useMemo(() => {
+    const name = session.user?.full_name?.trim();
+    if (name) {
+      const [firstName] = name.split(/\s+/).filter(Boolean);
+      if (firstName) return firstName;
+    }
+    return normalizedRoleLabel;
+  }, [normalizedRoleLabel, session.user?.full_name]);
 
   useEffect(() => {
     setCurrentUri(sourceUri);
@@ -344,7 +377,7 @@ export function PhpWebViewPage({
               setMenuVisible(true);
             }
           }}
-          role={role}
+          userLabel={personDisplayLabel}
           colors={theme.colors}
         />
       ) : null}
@@ -494,8 +527,10 @@ export function PhpWebViewPage({
           onClose={() => setMenuVisible(false)}
           items={menuItems}
           activeKey={activeKey}
+          isDark={theme.isDark}
           colors={theme.colors}
-          role={role}
+          role={normalizedRoleLabel}
+          displayName={personDisplayLabel}
           onLogout={onLogout}
         />
       ) : null}

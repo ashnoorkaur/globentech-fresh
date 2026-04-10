@@ -1,9 +1,10 @@
 import { router } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
     fetchAdminUsers,
     fetchPendingOrders,
@@ -42,11 +43,7 @@ export default function AdminDashboardPage() {
     }
   }, []);
 
-  useEffect(() => {
-    loadLiveData();
-    const timer = setInterval(loadLiveData, 12000);
-    return () => clearInterval(timer);
-  }, [loadLiveData]);
+  useFocusedPolling(loadLiveData, { intervalMs: 20000 });
 
   const stats = useMemo(() => {
     const total = orders.length;

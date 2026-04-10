@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
+import { PasswordField } from "../components/ui/password-field";
 import {
     adminMenu,
     customerMenu,
@@ -101,50 +102,20 @@ export default function ChangePasswordPage() {
         <Text style={[styles.helper, { color: theme.colors.textMuted }]}>
           Choose a strong password with 8+ characters and confirm it below.
         </Text>
-        <TextInput
+        <PasswordField
           value={currentPassword}
           onChangeText={setCurrentPassword}
-          secureTextEntry
           placeholder="Current Password *"
-          placeholderTextColor={theme.colors.textMuted}
-          style={[
-            styles.input,
-            {
-              color: theme.colors.text,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.inputBg,
-            },
-          ]}
         />
-        <TextInput
+        <PasswordField
           value={newPassword}
           onChangeText={setNewPassword}
-          secureTextEntry
           placeholder="New Password *"
-          placeholderTextColor={theme.colors.textMuted}
-          style={[
-            styles.input,
-            {
-              color: theme.colors.text,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.inputBg,
-            },
-          ]}
         />
-        <TextInput
+        <PasswordField
           value={confirmPassword}
           onChangeText={setConfirmPassword}
-          secureTextEntry
           placeholder="Confirm New Password *"
-          placeholderTextColor={theme.colors.textMuted}
-          style={[
-            styles.input,
-            {
-              color: theme.colors.text,
-              borderColor: theme.colors.border,
-              backgroundColor: theme.colors.inputBg,
-            },
-          ]}
         />
 
         <Pressable

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { FeedbackModal } from "../components/ui/feedback-modal";
 
 type ConfirmState = {
@@ -63,20 +63,17 @@ export function useConfirmModal() {
     }
   };
 
-  const modal = useMemo(
-    () => (
-      <FeedbackModal
-        visible={state.visible}
-        title={state.title}
-        message={state.message}
-        variant={state.variant}
-        confirmText={busy ? "Working..." : state.confirmText}
-        cancelText={state.cancelText}
-        onCancel={close}
-        onConfirm={handleConfirm}
-      />
-    ),
-    [state, busy],
+  const modal = (
+    <FeedbackModal
+      visible={state.visible}
+      title={state.title}
+      message={state.message}
+      variant={state.variant}
+      confirmText={busy ? "Working..." : state.confirmText}
+      cancelText={state.cancelText}
+      onCancel={close}
+      onConfirm={handleConfirm}
+    />
   );
 
   return { openConfirm, modal, close };

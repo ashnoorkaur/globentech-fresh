@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { FeedbackModal } from "../components/ui/feedback-modal";
 
 type FeedbackVariant = "info" | "success" | "error";
@@ -20,30 +20,39 @@ const initialState: FeedbackState = {
 export function useFeedbackModal() {
   const [state, setState] = useState<FeedbackState>(initialState);
 
-  const close = () => setState((prev) => ({ ...prev, visible: false }));
+  const close = useCallback(
+    () => setState((prev) => ({ ...prev, visible: false })),
+    [],
+  );
 
-  const show = (variant: FeedbackVariant, title: string, message: string) => {
-    setState({ visible: true, variant, title, message });
-  };
+  const show = useCallback(
+    (variant: FeedbackVariant, title: string, message: string) => {
+      setState({ visible: true, variant, title, message });
+    },
+    [],
+  );
 
-  const showInfo = (title: string, message: string) =>
-    show("info", title, message);
-  const showSuccess = (title: string, message: string) =>
-    show("success", title, message);
-  const showError = (title: string, message: string) =>
-    show("error", title, message);
+  const showInfo = useCallback(
+    (title: string, message: string) => show("info", title, message),
+    [show],
+  );
+  const showSuccess = useCallback(
+    (title: string, message: string) => show("success", title, message),
+    [show],
+  );
+  const showError = useCallback(
+    (title: string, message: string) => show("error", title, message),
+    [show],
+  );
 
-  const modal = useMemo(
-    () => (
-      <FeedbackModal
-        visible={state.visible}
-        title={state.title}
-        message={state.message}
-        variant={state.variant}
-        onConfirm={close}
-      />
-    ),
-    [state],
+  const modal = (
+    <FeedbackModal
+      visible={state.visible}
+      title={state.title}
+      message={state.message}
+      variant={state.variant}
+      onConfirm={close}
+    />
   );
 
   return { showInfo, showSuccess, showError, modal, close };

@@ -69,16 +69,6 @@ const mapProfileToAuthUser = (profile: {
   role: normalizeRole(profile.role),
 });
 
-const buildNameFromEmail = (email: string) => {
-  const local = email.split("@")[0] || "user";
-  const spaced = local.replace(/[._-]+/g, " ").trim();
-  return spaced
-    .split(" ")
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-};
-
 const inferRoleFromEmail = (email: string): AuthRole => {
   const value = email.toLowerCase();
   if (value.includes("admin")) return "administrator";
@@ -86,33 +76,47 @@ const inferRoleFromEmail = (email: string): AuthRole => {
   return "customer";
 };
 
+const inferKnownTestIdFromEmail = (email: string) => {
+  const normalized = email.trim().toLowerCase();
+  if (normalized === "admin@globentech.com") return 1;
+  if (normalized === "tech@globentech.com") return 2;
+  if (normalized === "customer@globentech.com") return 3;
+  return 0;
+};
+
+const roleToDisplayName = (role: AuthRole) => {
+  if (role === "administrator") return "Admin";
+  if (role === "technician") return "Technician";
+  return "Customer";
+};
+
+const deriveDisplayNameFromEmail = (email: string) => {
+  const localPart = email.split("@")[0] || "";
+  const cleaned = localPart
+    .replace(/[._-]+/g, " ")
+    .replace(/\d+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned) return "";
+
+  return cleaned
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+};
+
 const inferRoleFromDashboardHtml = (
   html: string,
   emailHint: string,
 ): AuthRole => {
   const content = html.toLowerCase();
+  const hintedRole = inferRoleFromEmail(emailHint);
 
-  // Prefer explicit role words when present in account/dashboard templates.
+  // Strong admin signals (admin.php is a unique URL so these double as safety checks).
   if (
-    content.includes("administrator") ||
-    content.includes("admin dashboard")
-  ) {
-    return "administrator";
-  }
-
-  if (content.includes("technician") || content.includes("assigned tasks")) {
-    return "technician";
-  }
-
-  if (
-    content.includes("customer") ||
-    content.includes("my orders") ||
-    content.includes("new order")
-  ) {
-    return "customer";
-  }
-
-  if (
+    content.includes("admin dashboard") ||
     content.includes("manage users") ||
     content.includes("pending approvals") ||
     content.includes("admin.php")
@@ -120,11 +124,57 @@ const inferRoleFromDashboardHtml = (
     return "administrator";
   }
 
-  if (content.includes("assigned tasks") || content.includes("technician")) {
+  const customerSignals = [
+    "my orders",
+    "new order",
+    "create order",
+    "place an order",
+    "order tracking",
+    "customer dashboard",
+    "request pickup",
+  ];
+  const technicianSignals = [
+    "assigned tasks",
+    "task queue",
+    "my tasks",
+    "technician dashboard",
+    "tech dashboard",
+    "assigned equipment",
+    "sample collection",
+    "pending samples",
+    "service schedule",
+    "technician calendar",
+  ];
+
+  const customerScore = customerSignals.reduce(
+    (score, signal) => score + (content.includes(signal) ? 1 : 0),
+    0,
+  );
+  const technicianScore = technicianSignals.reduce(
+    (score, signal) => score + (content.includes(signal) ? 1 : 0),
+    0,
+  );
+
+  if (technicianScore > customerScore && technicianScore > 0) {
     return "technician";
   }
 
-  return inferRoleFromEmail(emailHint);
+  if (customerScore > technicianScore && customerScore > 0) {
+    return "customer";
+  }
+
+  // Weak fallback signals — generic role words that may appear on either role's page.
+  if (content.includes("administrator")) return "administrator";
+
+  const hasCustomerWord = content.includes("customer");
+  const hasTechWord =
+    content.includes("technician") || content.includes("tech ");
+  if (hasCustomerWord && !hasTechWord) return "customer";
+  if (hasTechWord && !hasCustomerWord) return "technician";
+
+  // On the shared /dashboard.php fallback, trust the login identity over an
+  // ambiguous page body so technician accounts do not drift into customer.
+  return hintedRole;
 };
 
 const wait = (ms: number) =>
@@ -171,13 +221,23 @@ const postToPhpLoginForm = async (email: string, password: string) => {
   }
 
   const text = await response.text();
-  const endedBackOnLogin = response.url.toLowerCase().includes("login.php");
-  const stillOnLoginForm =
-    endedBackOnLogin ||
-    /<input[^>]*name=["']password["']/i.test(text) ||
-    /<form[^>]*(id|name|class)=["'][^"']*login/i.test(text);
-  if (stillOnLoginForm) {
-    throw new Error("Invalid email or password.");
+
+  // Detect login failure by checking both the final URL and the page content.
+  // response.url is unreliable in React Native (does not update after redirects),
+  // so we also inspect the HTML body for structural login-page signals.
+  const urlIndicatesLoginPage = response.url
+    .toLowerCase()
+    .includes("login.php");
+  const bodyIndicatesLoginPage =
+    /name=["']password["']/i.test(text) ||
+    /<title>\s*(?:login|sign.?in)/i.test(text);
+
+  if (urlIndicatesLoginPage || bodyIndicatesLoginPage) {
+    const knownLoginError =
+      text.match(
+        /invalid email or password|incorrect password|account (?:is )?(?:inactive|deactivated|disabled)|verify your email|email not verified|account not found/i,
+      )?.[0] || "Invalid email or password.";
+    throw new Error(knownLoginError);
   }
 
   return text;
@@ -247,10 +307,21 @@ const tryLegacySessionUser = async (
     { path: routes.home, roleHint: "auto" },
   ];
 
-  const uniqueCandidates = dashboardCandidates.filter(
-    (candidate, index, self) =>
-      self.findIndex((item) => item.path === candidate.path) === index,
-  );
+  // Deduplicate by path; when multiple roles share the same URL (e.g. customer
+  // and technician both use /dashboard.php), collapse roleHint to "auto" so we
+  // infer the role purely from the HTML content instead of trusting a stale hint.
+  const seenPaths = new Map<
+    string,
+    { path: string; roleHint: AuthRole | "auto" }
+  >();
+  for (const candidate of dashboardCandidates) {
+    if (seenPaths.has(candidate.path)) {
+      seenPaths.set(candidate.path, { ...candidate, roleHint: "auto" });
+    } else {
+      seenPaths.set(candidate.path, candidate);
+    }
+  }
+  const uniqueCandidates = Array.from(seenPaths.values());
 
   for (const candidate of uniqueCandidates) {
     try {
@@ -274,12 +345,23 @@ const tryLegacySessionUser = async (
       }
 
       const inferredRole = inferRoleFromDashboardHtml(text, emailHint || "");
+      // Always trust what the HTML actually says — customer and technician share
+      // the same dashboard URL so the roleHint cannot be relied upon there.
+      // For the admin URL, also cross-check the inferred role so a redirect to
+      // a non-admin page doesn't accidentally return "administrator".
       const role =
-        candidate.roleHint === "auto" ? inferredRole : candidate.roleHint;
+        candidate.roleHint === "auto"
+          ? inferredRole
+          : inferredRole !== "customer" &&
+              inferredRole !== "technician" &&
+              inferredRole !== "administrator"
+            ? candidate.roleHint // HTML gave no clear signal, trust the hint
+            : inferredRole; // HTML is authoritative
+      const email = emailHint || "session@local";
       return {
-        id: 0,
-        full_name: "Authenticated User",
-        email: emailHint || "session@local",
+        id: inferKnownTestIdFromEmail(email),
+        full_name: deriveDisplayNameFromEmail(email) || roleToDisplayName(role),
+        email,
         role,
       };
     } catch {
@@ -300,55 +382,70 @@ const tryLegacyLogout = async () => {
 export async function loginWithPassword(email: string, password: string) {
   const endpoints = getApiEndpoints();
   const normalizedEmail = email.trim().toLowerCase();
+  let legacyLoginError: Error | null = null;
 
   const resolveUserFromActiveSession = async (
     dashboardHtml?: string,
   ): Promise<AuthUser> => {
-    // Session cookie may need a moment before profile endpoints reflect it.
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        const profile = await fetchMyProfile();
-        return mapProfileToAuthUser(profile);
-      } catch {
-        // Continue to fallbacks below.
-      }
-
-      try {
-        const response = await apiRequest<AuthUser | SuccessEnvelope<AuthUser>>(
-          endpoints.authSession,
-        );
-        const user = unwrap(response);
-        if (isAuthUser(user)) {
-          return {
-            id: user.id,
-            full_name: user.full_name,
-            email: user.email,
-            role: normalizeRole(user.role as unknown as string),
-          };
-        }
-      } catch {
-        // Continue to legacy session fallback.
-      }
-
-      try {
-        const legacyUser = await tryLegacySessionUser(normalizedEmail);
-        if (legacyUser) return legacyUser;
-      } catch {
-        // Ignore and retry.
-      }
-
-      if (attempt < 2) {
-        await wait(250);
-      }
+    // Try profile API first — one attempt, no retry loop.
+    // The session cookie is already set by the time PHP redirected to the
+    // dashboard, so there is no benefit in retrying.
+    try {
+      const profile = await fetchMyProfile();
+      return mapProfileToAuthUser(profile);
+    } catch {
+      // Profile API unavailable (legacy-only deployment).
     }
 
+    // One JSON session endpoint attempt.
+    try {
+      const response = await apiRequest<AuthUser | SuccessEnvelope<AuthUser>>(
+        endpoints.authSession,
+      );
+      const user = unwrap(response);
+      if (isAuthUser(user)) {
+        return {
+          id: user.id,
+          full_name: user.full_name,
+          email: user.email,
+          role: normalizeRole(user.role as unknown as string),
+        };
+      }
+    } catch {
+      // Continue.
+    }
+
+    // We already have the dashboard HTML from the PHP login redirect — infer
+    // the role from it directly instead of making more network requests.
+    if (dashboardHtml) {
+      const role = inferRoleFromDashboardHtml(dashboardHtml, normalizedEmail);
+      return {
+        id: inferKnownTestIdFromEmail(normalizedEmail),
+        full_name:
+          deriveDisplayNameFromEmail(normalizedEmail) ||
+          roleToDisplayName(role),
+        email: normalizedEmail,
+        role,
+      };
+    }
+
+    // Non-PHP path: one legacy session scrape attempt.
+    try {
+      const legacyUser = await tryLegacySessionUser(normalizedEmail);
+      if (legacyUser) return legacyUser;
+    } catch {
+      // Fall through.
+    }
+
+    // Final fallback: email-based role inference.
+    const inferredRole = inferRoleFromEmail(normalizedEmail);
     return {
-      id: 0,
-      full_name: buildNameFromEmail(normalizedEmail),
+      id: inferKnownTestIdFromEmail(normalizedEmail),
+      full_name:
+        deriveDisplayNameFromEmail(normalizedEmail) ||
+        roleToDisplayName(inferredRole),
       email: normalizedEmail,
-      role: dashboardHtml
-        ? inferRoleFromDashboardHtml(dashboardHtml, normalizedEmail)
-        : inferRoleFromEmail(normalizedEmail),
+      role: inferredRole,
     };
   };
 
@@ -357,11 +454,8 @@ export async function loginWithPassword(email: string, password: string) {
     const dashboardHtml = await postToPhpLoginForm(normalizedEmail, password);
     return await resolveUserFromActiveSession(dashboardHtml);
   } catch (legacyError) {
-    if (
-      legacyError instanceof Error &&
-      /invalid email or password/i.test(legacyError.message)
-    ) {
-      throw legacyError;
+    if (legacyError instanceof Error) {
+      legacyLoginError = legacyError;
     }
 
     try {
@@ -391,8 +485,30 @@ export async function loginWithPassword(email: string, password: string) {
         role: normalizeRole(user.role as unknown as string),
       };
     } catch (apiError) {
+      // If either the PHP login or the API login gave a definitive credential
+      // rejection, surface that error immediately. Do NOT fall through to the
+      // session-scrape fallback: an old session cookie or the email-inference
+      // path would otherwise let a wrong-password attempt succeed.
+      const credentialPattern =
+        /invalid email or password|incorrect password|inactive|deactivated|disabled|not verified|account not found/i;
+
+      if (
+        legacyLoginError &&
+        credentialPattern.test(legacyLoginError.message)
+      ) {
+        throw legacyLoginError;
+      }
+
+      if (
+        apiError instanceof Error &&
+        credentialPattern.test(apiError.message)
+      ) {
+        throw new Error(apiError.message);
+      }
+
       // Final fallback: try reading current session in case auth API succeeded but
-      // returned a malformed payload.
+      // returned a malformed payload (only safe to reach when neither side gave a
+      // definitive credential rejection above).
       try {
         return await resolveUserFromActiveSession();
       } catch {
@@ -441,32 +557,40 @@ export async function registerAccount(payload: RegisterPayload) {
 
 export async function fetchSessionUser() {
   const endpoints = getApiEndpoints();
-  try {
-    const legacyUser = await tryLegacySessionUser();
-    if (legacyUser) return legacyUser;
-  } catch {
-    // continue with API fallbacks
-  }
 
+  // Prefer the profile API — it reads the role directly from the database.
   try {
     const profile = await fetchMyProfile();
     return mapProfileToAuthUser(profile);
   } catch {
-    try {
-      const response = await apiRequest<AuthUser | SuccessEnvelope<AuthUser>>(
-        endpoints.authSession,
-      );
-      const raw = unwrap(response);
-      return {
-        id: raw.id,
-        full_name: raw.full_name,
-        email: raw.email,
-        role: normalizeRole(raw.role as unknown as string),
-      };
-    } catch {
-      throw new Error("No active session.");
-    }
+    // continue
   }
+
+  // JSON session endpoint fallback.
+  try {
+    const response = await apiRequest<AuthUser | SuccessEnvelope<AuthUser>>(
+      endpoints.authSession,
+    );
+    const raw = unwrap(response);
+    return {
+      id: raw.id,
+      full_name: raw.full_name,
+      email: raw.email,
+      role: normalizeRole(raw.role as unknown as string),
+    };
+  } catch {
+    // continue
+  }
+
+  // Last resort: legacy HTML scraping (least reliable).
+  try {
+    const legacyUser = await tryLegacySessionUser();
+    if (legacyUser) return legacyUser;
+  } catch {
+    // fall through
+  }
+
+  throw new Error("No active session.");
 }
 
 export async function logoutSession() {

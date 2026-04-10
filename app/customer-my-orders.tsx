@@ -1,9 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { customerMenu } from "../constants/role-menus";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import { statusLabel, toLifecycleStatus } from "../lib/order-workflow";
 import {
     fetchCustomerMyOrders,
@@ -164,11 +165,7 @@ export default function CustomerMyOrdersPage() {
     }
   }, [feedback]);
 
-  useEffect(() => {
-    loadData();
-    const timer = setInterval(loadData, 15000);
-    return () => clearInterval(timer);
-  }, [loadData]);
+  useFocusedPolling(loadData, { intervalMs: 20000 });
 
   const stats = useMemo(() => {
     const submitted = orders.filter(
@@ -221,14 +218,9 @@ export default function CustomerMyOrdersPage() {
       activeKey="my-orders"
       menuItems={customerMenu}
       dashboardRoute="/customer-dashboard"
+      scrollable={false}
     >
-      <ScrollView
-        contentContainerStyle={{ gap: 10, paddingBottom: 8 }}
-        onScrollBeginDrag={() => {
-          setStatusOpen(false);
-          setSortOpen(false);
-        }}
-      >
+      <View style={styles.pageContent}>
         <View
           style={[
             styles.card,
@@ -515,290 +507,344 @@ export default function CustomerMyOrdersPage() {
           >
             <Text style={styles.applyBtnText}>Apply Filters</Text>
           </Pressable>
-
-          {filteredOrders.map((order) => {
-            const normalizedStatus = normalizeOrderStatus(order.status);
-            const lifecycle = toLifecycleStatus(order.status);
-            const activeStep = getTimelineStep(normalizedStatus);
-            const expanded = expandedOrderId === order.id;
-            const orderNumber = order.order_number || `Order #${order.id}`;
-
-            const stageColor =
-              normalizedStatus === "completed"
-                ? theme.colors.success
-                : normalizedStatus === "processing"
-                  ? theme.colors.warning
-                  : normalizedStatus === "approved"
-                    ? theme.colors.secondary
-                    : normalizedStatus === "rejected"
-                      ? theme.colors.danger
-                      : theme.colors.primary;
-
-            return (
-              <View
-                key={order.id}
-                style={[
-                  styles.row,
-                  {
-                    borderColor: theme.colors.border,
-                    backgroundColor: theme.colors.surfaceMuted,
-                  },
-                ]}
+          <FlatList
+            data={filteredOrders}
+            keyExtractor={(item) => String(item.id)}
+            style={styles.ordersList}
+            contentContainerStyle={styles.ordersListContent}
+            onScrollBeginDrag={() => {
+              setStatusOpen(false);
+              setSortOpen(false);
+            }}
+            initialNumToRender={6}
+            maxToRenderPerBatch={8}
+            windowSize={7}
+            removeClippedSubviews
+            ListEmptyComponent={
+              <Text
+                style={[styles.emptyText, { color: theme.colors.textMuted }]}
               >
-                <View style={styles.orderTopRow}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.title, { color: theme.colors.text }]}>
-                      {orderNumber}
-                    </Text>
-                    <Text
-                      style={[
-                        styles.subtitle,
-                        { color: theme.colors.textMuted },
-                      ]}
-                    >
-                      {order.created_at
-                        ? new Date(order.created_at).toLocaleString()
-                        : "No date"}
-                    </Text>
-                  </View>
+                No orders match the selected filter.
+              </Text>
+            }
+            renderItem={({ item: order }) => {
+              const normalizedStatus = normalizeOrderStatus(order.status);
+              const lifecycle = toLifecycleStatus(order.status);
+              const activeStep = getTimelineStep(normalizedStatus);
+              const expanded = expandedOrderId === order.id;
+              const orderNumber = order.order_number || `Order #${order.id}`;
+              const stageColor =
+                normalizedStatus === "completed"
+                  ? theme.colors.success
+                  : normalizedStatus === "processing"
+                    ? theme.colors.warning
+                    : normalizedStatus === "approved"
+                      ? theme.colors.secondary
+                      : normalizedStatus === "rejected"
+                        ? theme.colors.danger
+                        : theme.colors.primary;
 
-                  <View
-                    style={[
-                      styles.statusPill,
-                      { backgroundColor: stageColor + "22" },
-                    ]}
-                  >
-                    <Text
-                      style={[styles.statusPillText, { color: stageColor }]}
-                    >
-                      {normalizedStatus === "rejected"
-                        ? "DISAPPROVED"
-                        : statusLabel(lifecycle).toUpperCase()}
-                    </Text>
-                  </View>
-                </View>
-
-                <Text style={[styles.stageMeaning, { color: stageColor }]}>
-                  {getStageMeaning(normalizedStatus)}
-                </Text>
-
-                <Text style={[styles.decisionText, { color: stageColor }]}>
-                  {getDecisionSummary(normalizedStatus, orderNumber)}
-                </Text>
-
+              return (
                 <View
                   style={[
-                    styles.timelineRow,
+                    styles.row,
                     {
                       borderColor: theme.colors.border,
-                      backgroundColor: theme.colors.surface,
+                      backgroundColor: theme.colors.surfaceMuted,
                     },
                   ]}
                 >
-                  {(
-                    [
-                      "Submitted",
-                      "Approved",
-                      "Processing",
-                      "Completed",
-                    ] as const
-                  ).map((label, index) => {
-                    const step = index + 1;
-                    const isDone = activeStep >= step;
-                    const isRejected = normalizedStatus === "rejected";
-                    return (
-                      <View key={label} style={styles.timelineStepWrap}>
-                        <View
-                          style={[
-                            styles.timelineDot,
-                            {
-                              backgroundColor: isRejected
-                                ? step === 1
-                                  ? theme.colors.danger
-                                  : theme.colors.surfaceMuted
-                                : isDone
-                                  ? theme.colors.success
-                                  : theme.colors.surfaceMuted,
-                              borderColor: isRejected
-                                ? theme.colors.danger
-                                : isDone
-                                  ? theme.colors.success
-                                  : theme.colors.border,
-                            },
-                          ]}
-                        />
-                        {index < 3 ? (
-                          <View
-                            style={[
-                              styles.timelineLine,
-                              {
-                                backgroundColor: isRejected
-                                  ? theme.colors.border
-                                  : activeStep > step
-                                    ? theme.colors.success
-                                    : theme.colors.border,
-                              },
-                            ]}
-                          />
-                        ) : null}
-                        <Text
-                          style={[
-                            styles.timelineLabel,
-                            {
-                              color: isRejected
-                                ? step === 1
-                                  ? theme.colors.danger
-                                  : theme.colors.textMuted
-                                : isDone
-                                  ? theme.colors.success
-                                  : theme.colors.textMuted,
-                            },
-                          ]}
-                        >
-                          {label}
-                        </Text>
-                      </View>
-                    );
-                  })}
-                </View>
+                  <View style={styles.orderTopRow}>
+                    <View style={{ flex: 1 }}>
+                      <Text
+                        style={[styles.title, { color: theme.colors.text }]}
+                      >
+                        {orderNumber}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.subtitle,
+                          { color: theme.colors.textMuted },
+                        ]}
+                      >
+                        {order.created_at
+                          ? new Date(order.created_at).toLocaleString()
+                          : "No date"}
+                      </Text>
+                    </View>
 
-                <View
-                  style={[
-                    styles.progressTrack,
-                    { backgroundColor: theme.colors.border },
-                  ]}
-                >
+                    <View
+                      style={[
+                        styles.statusPill,
+                        { backgroundColor: stageColor + "22" },
+                      ]}
+                    >
+                      <Text
+                        style={[styles.statusPillText, { color: stageColor }]}
+                      >
+                        {normalizedStatus === "rejected"
+                          ? "DISAPPROVED"
+                          : statusLabel(lifecycle).toUpperCase()}
+                      </Text>
+                    </View>
+                  </View>
+
+                  <Text style={[styles.stageMeaning, { color: stageColor }]}>
+                    {getStageMeaning(normalizedStatus)}
+                  </Text>
+                  <Text style={[styles.decisionText, { color: stageColor }]}>
+                    {getDecisionSummary(normalizedStatus, orderNumber)}
+                  </Text>
+
                   <View
                     style={[
-                      styles.progressFill,
-                      {
-                        width: `${getProgressPercent(normalizedStatus)}%`,
-                        backgroundColor:
-                          normalizedStatus === "rejected"
-                            ? theme.colors.danger
-                            : theme.colors.success,
-                      },
-                    ]}
-                  />
-                </View>
-
-                <View style={styles.metaRow}>
-                  <Text
-                    style={[styles.metaText, { color: theme.colors.textMuted }]}
-                  >
-                    Priority: {(order.priority || "standard").toUpperCase()}
-                  </Text>
-                  <Text
-                    style={[styles.metaText, { color: theme.colors.textMuted }]}
-                  >
-                    Samples: {order.sample_count ?? 0}
-                  </Text>
-                </View>
-
-                <Pressable
-                  onPress={() => setExpandedOrderId(expanded ? null : order.id)}
-                  style={[
-                    styles.detailsBtn,
-                    { backgroundColor: theme.colors.surface },
-                  ]}
-                >
-                  <Text
-                    style={[
-                      styles.detailsBtnText,
-                      { color: theme.colors.primary },
-                    ]}
-                  >
-                    {expanded ? "Hide Details" : "View Details"}
-                  </Text>
-                </Pressable>
-
-                {expanded ? (
-                  <View
-                    style={[
-                      styles.detailsBox,
+                      styles.timelineRow,
                       {
                         borderColor: theme.colors.border,
                         backgroundColor: theme.colors.surface,
                       },
                     ]}
                   >
+                    {(
+                      [
+                        "Submitted",
+                        "Approved",
+                        "Processing",
+                        "Completed",
+                      ] as const
+                    ).map((label, index) => {
+                      const step = index + 1;
+                      const isDone = activeStep >= step;
+                      const isRejected = normalizedStatus === "rejected";
+                      return (
+                        <View key={label} style={styles.timelineStepWrap}>
+                          <View
+                            style={[
+                              styles.timelineDot,
+                              {
+                                backgroundColor: isRejected
+                                  ? step === 1
+                                    ? theme.colors.danger
+                                    : theme.colors.surfaceMuted
+                                  : isDone
+                                    ? theme.colors.success
+                                    : theme.colors.surfaceMuted,
+                                borderColor: isRejected
+                                  ? theme.colors.danger
+                                  : isDone
+                                    ? theme.colors.success
+                                    : theme.colors.border,
+                              },
+                            ]}
+                          />
+                          {index < 3 ? (
+                            <View
+                              style={[
+                                styles.timelineLine,
+                                {
+                                  backgroundColor: isRejected
+                                    ? theme.colors.border
+                                    : activeStep > step
+                                      ? theme.colors.success
+                                      : theme.colors.border,
+                                },
+                              ]}
+                            />
+                          ) : null}
+                          <Text
+                            style={[
+                              styles.timelineLabel,
+                              {
+                                color: isRejected
+                                  ? step === 1
+                                    ? theme.colors.danger
+                                    : theme.colors.textMuted
+                                  : isDone
+                                    ? theme.colors.success
+                                    : theme.colors.textMuted,
+                              },
+                            ]}
+                          >
+                            {label}
+                          </Text>
+                        </View>
+                      );
+                    })}
+                  </View>
+
+                  <View
+                    style={[
+                      styles.progressTrack,
+                      { backgroundColor: theme.colors.border },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        styles.progressFill,
+                        {
+                          width: `${getProgressPercent(normalizedStatus)}%`,
+                          backgroundColor:
+                            normalizedStatus === "rejected"
+                              ? theme.colors.danger
+                              : theme.colors.success,
+                        },
+                      ]}
+                    />
+                  </View>
+
+                  <View style={styles.metaRow}>
                     <Text
-                      style={[styles.detailLine, { color: theme.colors.text }]}
-                    >
-                      Order ID: {order.id}
-                    </Text>
-                    <Text
-                      style={[styles.detailLine, { color: theme.colors.text }]}
-                    >
-                      Order Number: {orderNumber}
-                    </Text>
-                    <Text
-                      style={[styles.detailLine, { color: theme.colors.text }]}
-                    >
-                      Status: {statusLabel(lifecycle)}
-                    </Text>
-                    <Text
-                      style={[styles.detailLine, { color: theme.colors.text }]}
-                    >
-                      Decision Summary:{" "}
-                      {getDecisionSummary(normalizedStatus, orderNumber)}
-                    </Text>
-                    <Text
-                      style={[styles.detailLine, { color: theme.colors.text }]}
-                    >
-                      Meaning: {getStageMeaning(normalizedStatus)}
-                    </Text>
-                    <Text
-                      style={[styles.detailLine, { color: theme.colors.text }]}
-                    >
-                      Customer: {order.customer_name || "N/A"}
-                    </Text>
-                    <Text
-                      style={[styles.detailLine, { color: theme.colors.text }]}
+                      style={[
+                        styles.metaText,
+                        { color: theme.colors.textMuted },
+                      ]}
                     >
                       Priority: {(order.priority || "standard").toUpperCase()}
                     </Text>
                     <Text
-                      style={[styles.detailLine, { color: theme.colors.text }]}
+                      style={[
+                        styles.metaText,
+                        { color: theme.colors.textMuted },
+                      ]}
                     >
-                      Sample Count: {order.sample_count ?? 0}
-                    </Text>
-                    <Text
-                      style={[styles.detailLine, { color: theme.colors.text }]}
-                    >
-                      Created:{" "}
-                      {order.created_at
-                        ? new Date(order.created_at).toLocaleString()
-                        : "N/A"}
-                    </Text>
-                    <Text
-                      style={[styles.detailLine, { color: theme.colors.text }]}
-                    >
-                      Estimated Completion:{" "}
-                      {order.estimated_completion
-                        ? new Date(order.estimated_completion).toLocaleString()
-                        : "N/A"}
+                      Samples: {order.sample_count ?? 0}
                     </Text>
                   </View>
-                ) : null}
-              </View>
-            );
-          })}
 
-          {filteredOrders.length === 0 ? (
-            <Text style={[styles.emptyText, { color: theme.colors.textMuted }]}>
-              No orders match the selected filter.
-            </Text>
-          ) : null}
+                  <Pressable
+                    onPress={() =>
+                      setExpandedOrderId(expanded ? null : order.id)
+                    }
+                    style={[
+                      styles.detailsBtn,
+                      { backgroundColor: theme.colors.surface },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.detailsBtnText,
+                        { color: theme.colors.primary },
+                      ]}
+                    >
+                      {expanded ? "Hide Details" : "View Details"}
+                    </Text>
+                  </Pressable>
+
+                  {expanded ? (
+                    <View
+                      style={[
+                        styles.detailsBox,
+                        {
+                          borderColor: theme.colors.border,
+                          backgroundColor: theme.colors.surface,
+                        },
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Order ID: {order.id}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Order Number: {orderNumber}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Status: {statusLabel(lifecycle)}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Decision Summary:{" "}
+                        {getDecisionSummary(normalizedStatus, orderNumber)}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Meaning: {getStageMeaning(normalizedStatus)}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Customer: {order.customer_name || "N/A"}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Priority: {(order.priority || "standard").toUpperCase()}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Sample Count: {order.sample_count ?? 0}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Created:{" "}
+                        {order.created_at
+                          ? new Date(order.created_at).toLocaleString()
+                          : "N/A"}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Estimated Completion:{" "}
+                        {order.estimated_completion
+                          ? new Date(
+                              order.estimated_completion,
+                            ).toLocaleString()
+                          : "N/A"}
+                      </Text>
+                    </View>
+                  ) : null}
+                </View>
+              );
+            }}
+          />
         </View>
-      </ScrollView>
+      </View>
       {feedback.modal}
     </RoleContentPage>
   );
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderRadius: 20, padding: 16, gap: 10 },
+  pageContent: { flex: 1 },
+  card: { flex: 1, borderWidth: 1, borderRadius: 20, padding: 16, gap: 10 },
   banner: {
     borderWidth: 1,
     borderRadius: 14,
@@ -849,6 +895,8 @@ const styles = StyleSheet.create({
   dropdownItemText: { fontSize: 12, fontWeight: "700" },
   applyBtn: { borderRadius: 10, paddingVertical: 9, alignItems: "center" },
   applyBtnText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  ordersList: { flex: 1 },
+  ordersListContent: { gap: 10, paddingBottom: 8 },
   row: { borderWidth: 1, borderRadius: 12, padding: 10, gap: 6 },
   orderTopRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   title: { fontSize: 14, fontWeight: "800" },

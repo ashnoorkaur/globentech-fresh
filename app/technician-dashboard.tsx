@@ -1,8 +1,9 @@
-import { router, useFocusEffect } from "expo-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { router } from "expo-router";
+import { useCallback, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { technicianMenu } from "../constants/role-menus";
+import { useFocusedPolling } from "../hooks/use-focused-polling";
 import { fetchTechnicianWorkQueue, type QueueEntry } from "../lib/calendar-api";
 import { useAppTheme } from "../lib/theme";
 
@@ -25,17 +26,7 @@ export default function TechnicianDashboardPage() {
     }
   }, []);
 
-  useEffect(() => {
-    loadQueue();
-    const timer = setInterval(loadQueue, 8000);
-    return () => clearInterval(timer);
-  }, [loadQueue]);
-
-  useFocusEffect(
-    useCallback(() => {
-      loadQueue();
-    }, [loadQueue]),
-  );
+  useFocusedPolling(loadQueue, { intervalMs: 12000 });
 
   const taskStats = useMemo(() => {
     const processingQueue = queue.filter((q) => {
