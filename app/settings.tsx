@@ -2,34 +2,33 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import {
-  ScrollView,
-  StyleSheet,
-  Switch,
-  Text,
-  TextInput,
-  View,
+    ScrollView,
+    StyleSheet,
+    Switch,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { PasswordField } from "../components/ui/password-field";
 import {
-  adminMenu,
-  customerMenu,
-  guestMenu,
-  technicianMenu,
+    adminMenu,
+    customerMenu,
+    guestMenu,
+    technicianMenu,
 } from "../constants/role-menus";
 import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
 import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
-  adminActivateUser,
-  adminChangeRole,
-  adminDeactivateUser,
-  changeMyPassword,
-  fetchAdminUserList,
-  fetchMyProfile,
-  type ProfileDto,
-  updateMyProfile,
+    adminActivateUser,
+    adminChangeRole,
+    adminDeactivateUser,
+    changeMyPassword,
+    fetchAdminUserList,
+    fetchMyProfile,
+    type ProfileDto,
 } from "../lib/account-api";
 import { logoutSession } from "../lib/auth-api";
 import { clearChatSession } from "../lib/chatbot-session";
@@ -86,7 +85,7 @@ export default function SettingsPage() {
         id: p.id,
         full_name: p.full_name,
         email: p.email,
-        role: p.role,
+        role: session.user?.role || p.role,
       });
 
       if (session.user?.role === "administrator") {
@@ -104,32 +103,6 @@ export default function SettingsPage() {
   };
 
   useFocusedPolling(loadData, { intervalMs: 25000 });
-
-  const saveProfile = async () => {
-    setBusy(true);
-    try {
-      await updateMyProfile({
-        full_name: fullName,
-        phone,
-        company_name: companyName,
-        address,
-      });
-      feedback.showSuccess(
-        "Profile Updated",
-        "Your account profile information has been saved successfully.",
-      );
-      await loadData();
-    } catch (error) {
-      feedback.showError(
-        "Profile Update Failed",
-        error instanceof Error
-          ? error.message
-          : "We could not update your profile right now.",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const savePassword = async () => {
     setBusy(true);
@@ -222,7 +195,7 @@ export default function SettingsPage() {
   return (
     <RoleContentPage
       title="Settings"
-      subtitle="Update your profile, security, and account access settings."
+      subtitle="Theme, security, and account access settings."
       role={roleLabel}
       activeKey="settings"
       menuItems={menuItems}
@@ -239,7 +212,7 @@ export default function SettingsPage() {
           ]}
         >
           <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            Profile
+            Account Overview
           </Text>
           <View
             style={[
@@ -302,15 +275,16 @@ export default function SettingsPage() {
             </Text>
             <TextInput
               value={fullName}
-              onChangeText={setFullName}
-              placeholder="Enter your full name"
+              onChangeText={() => {}}
+              placeholder="Full name"
+              editable={false}
               placeholderTextColor={theme.colors.textMuted}
               style={[
                 styles.input,
                 {
-                  color: theme.colors.text,
+                  color: theme.colors.textMuted,
                   borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
+                  backgroundColor: theme.colors.surfaceMuted,
                 },
               ]}
             />
@@ -323,16 +297,16 @@ export default function SettingsPage() {
             </Text>
             <TextInput
               value={phone}
-              onChangeText={setPhone}
-              placeholder="Enter your phone number"
-              keyboardType="phone-pad"
+              onChangeText={() => {}}
+              placeholder="Phone"
+              editable={false}
               placeholderTextColor={theme.colors.textMuted}
               style={[
                 styles.input,
                 {
-                  color: theme.colors.text,
+                  color: theme.colors.textMuted,
                   borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
+                  backgroundColor: theme.colors.surfaceMuted,
                 },
               ]}
             />
@@ -345,15 +319,16 @@ export default function SettingsPage() {
             </Text>
             <TextInput
               value={companyName}
-              onChangeText={setCompanyName}
-              placeholder="Enter your company name"
+              onChangeText={() => {}}
+              placeholder="Company name"
+              editable={false}
               placeholderTextColor={theme.colors.textMuted}
               style={[
                 styles.input,
                 {
-                  color: theme.colors.text,
+                  color: theme.colors.textMuted,
                   borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
+                  backgroundColor: theme.colors.surfaceMuted,
                 },
               ]}
             />
@@ -366,29 +341,23 @@ export default function SettingsPage() {
             </Text>
             <TextInput
               value={address}
-              onChangeText={setAddress}
-              placeholder="Enter your address"
+              onChangeText={() => {}}
+              placeholder="Address"
+              editable={false}
               multiline
               placeholderTextColor={theme.colors.textMuted}
               style={[
                 styles.input,
                 styles.textarea,
                 {
-                  color: theme.colors.text,
+                  color: theme.colors.textMuted,
                   borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
+                  backgroundColor: theme.colors.surfaceMuted,
                 },
               ]}
             />
           </View>
           <View style={styles.inlineActions}>
-            <GradientButton
-              onPress={saveProfile}
-              style={[styles.btn, { flex: 1 }]}
-              variant="primary"
-            >
-              {busy ? "Saving..." : "Update Profile"}
-            </GradientButton>
             <GradientButton
               onPress={logoutNow}
               style={[styles.btn, { flex: 1 }]}

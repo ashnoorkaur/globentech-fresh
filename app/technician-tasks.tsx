@@ -4,6 +4,10 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { technicianMenu } from "../constants/role-menus";
 import { useFocusedPolling } from "../hooks/use-focused-polling";
+import {
+    hasCachedScreenState,
+    useCachedScreenState,
+} from "../hooks/use-screen-cache";
 import { fetchTechnicianWorkQueue, type QueueEntry } from "../lib/calendar-api";
 import { statusLabel, toLifecycleStatus } from "../lib/order-workflow";
 import { useAppTheme } from "../lib/theme";
@@ -41,9 +45,17 @@ const technicianDecisionText = (status?: string) => {
 
 export default function TechnicianTasksPage() {
   const theme = useAppTheme();
-  const [queue, setQueue] = useState<QueueEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState("");
+  const [queue, setQueue] = useCachedScreenState<QueueEntry[]>(
+    "technician-tasks:queue",
+    [],
+  );
+  const [loading, setLoading] = useState(
+    () => !hasCachedScreenState("technician-tasks:queue"),
+  );
+  const [lastUpdated, setLastUpdated] = useCachedScreenState(
+    "technician-tasks:lastUpdated",
+    "",
+  );
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("all");
   const [draftStatus, setDraftStatus] = useState<StatusFilter>("all");
@@ -52,17 +64,19 @@ export default function TechnicianTasksPage() {
   const [priorityOpen, setPriorityOpen] = useState(false);
 
   const loadTasks = useCallback(async () => {
-    setLoading(true);
+    if (queue.length === 0) {
+      setLoading(true);
+    }
     try {
       const data = await fetchTechnicianWorkQueue();
       setQueue(data.queue ?? []);
       setLastUpdated(new Date().toLocaleTimeString());
     } catch {
-      setQueue([]);
+      // Keep the last successful snapshot visible.
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [queue.length, setLastUpdated, setQueue]);
 
   useFocusedPolling(loadTasks, { intervalMs: 12000 });
 
@@ -109,7 +123,7 @@ export default function TechnicianTasksPage() {
   return (
     <RoleContentPage
       title="Assigned Tasks"
-      subtitle="Live technician queue synchronized with calendar scheduling."
+      subtitle="Live technician queue synchronized with admin assignment and calendar scheduling."
       role="Technician"
       activeKey="tasks"
       menuItems={technicianMenu}
@@ -388,6 +402,15 @@ export default function TechnicianTasksPage() {
                   Priority: {(item.priority || "standard").toUpperCase()}
                 </Text>
                 <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
+                  Customer: {item.customer_name || "N/A"} | Company: {item.company_name || "N/A"}
+                </Text>
+                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
+                  Sample: {item.sample_type || "N/A"} | Compound: {item.compound_name || "N/A"}
+                </Text>
+                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
+                  Quantity: {item.quantity ?? "N/A"} {item.unit || ""}
+                </Text>
+                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
                   Order ID: {item.order_id} | Queue ID: {item.queue_id}
                 </Text>
                 <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
@@ -406,6 +429,9 @@ export default function TechnicianTasksPage() {
                   ETA:{" "}
                   {item.estimated_completion || item.scheduled_end || "Pending"}
                 </Text>
+                {item.notes ? (
+                  <Text style={[styles.subStrong, { color: theme.colors.text }]}>Notes: {item.notes}</Text>
+                ) : null}
               </View>
             );
           })
@@ -445,6 +471,12 @@ export default function TechnicianTasksPage() {
                 Order ID: {item.order_id} | Queue ID: {item.queue_id}
               </Text>
               <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
+                Customer: {item.customer_name || "N/A"} | Company: {item.company_name || "N/A"}
+              </Text>
+              <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
+                Sample: {item.sample_type || "N/A"} | Compound: {item.compound_name || "N/A"}
+              </Text>
+              <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
                 Samples:{" "}
                 {item.sample_types?.length
                   ? item.sample_types.join(", ")
@@ -454,6 +486,9 @@ export default function TechnicianTasksPage() {
                 Finished:{" "}
                 {item.scheduled_end || item.estimated_completion || "N/A"}
               </Text>
+              {item.notes ? (
+                <Text style={[styles.subStrong, { color: theme.colors.text }]}>Notes: {item.notes}</Text>
+              ) : null}
             </View>
           ))
         )}

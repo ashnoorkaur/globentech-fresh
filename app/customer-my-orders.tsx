@@ -1,10 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { customerMenu } from "../constants/role-menus";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
 import { useFocusedPolling } from "../hooks/use-focused-polling";
+import { useCachedScreenState } from "../hooks/use-screen-cache";
 import { statusLabel, toLifecycleStatus } from "../lib/order-workflow";
 import {
     fetchCustomerMyOrders,
@@ -88,11 +89,19 @@ const getDecisionSummary = (status: StatusFilter, orderNumber: string) => {
   return `Admin Decision: Pending - ${orderNumber} is waiting for admin review.`;
 };
 
+const formatSampleType = (value?: string) => {
+  if (!value) return "N/A";
+  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+};
+
 export default function CustomerMyOrdersPage() {
   const theme = useAppTheme();
   const feedback = useFeedbackModal();
   const previousStatusByIdRef = useRef<Record<string, StatusFilter>>({});
-  const [orders, setOrders] = useState<CustomerOrderRow[]>([]);
+  const [orders, setOrders] = useCachedScreenState<CustomerOrderRow[]>(
+    "customer-my-orders:orders",
+    [],
+  );
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sortMode, setSortMode] = useState<SortMode>("newest");
   const [draftStatus, setDraftStatus] = useState<StatusFilter>("all");
@@ -100,7 +109,10 @@ export default function CustomerMyOrdersPage() {
   const [statusOpen, setStatusOpen] = useState(false);
   const [sortOpen, setSortOpen] = useState(false);
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
-  const [lastUpdated, setLastUpdated] = useState("");
+  const [lastUpdated, setLastUpdated] = useCachedScreenState(
+    "customer-my-orders:lastUpdated",
+    "",
+  );
 
   const loadData = useCallback(async () => {
     try {
@@ -161,9 +173,9 @@ export default function CustomerMyOrdersPage() {
         );
       }
     } catch {
-      setOrders([]);
+      // Keep the last successful snapshot visible.
     }
-  }, [feedback]);
+  }, [feedback, setLastUpdated, setOrders]);
 
   useFocusedPolling(loadData, { intervalMs: 20000 });
 
@@ -218,7 +230,6 @@ export default function CustomerMyOrdersPage() {
       activeKey="my-orders"
       menuItems={customerMenu}
       dashboardRoute="/customer-dashboard"
-      scrollable={false}
     >
       <View style={styles.pageContent}>
         <View
@@ -507,32 +518,21 @@ export default function CustomerMyOrdersPage() {
           >
             <Text style={styles.applyBtnText}>Apply Filters</Text>
           </Pressable>
-          <FlatList
-            data={filteredOrders}
-            keyExtractor={(item) => String(item.id)}
-            style={styles.ordersList}
-            contentContainerStyle={styles.ordersListContent}
-            onScrollBeginDrag={() => {
-              setStatusOpen(false);
-              setSortOpen(false);
-            }}
-            initialNumToRender={6}
-            maxToRenderPerBatch={8}
-            windowSize={7}
-            removeClippedSubviews
-            ListEmptyComponent={
+          <View style={styles.ordersList}>
+            {filteredOrders.length === 0 ? (
               <Text
                 style={[styles.emptyText, { color: theme.colors.textMuted }]}
               >
                 No orders match the selected filter.
               </Text>
-            }
-            renderItem={({ item: order }) => {
+            ) : (
+              filteredOrders.map((order) => {
               const normalizedStatus = normalizeOrderStatus(order.status);
               const lifecycle = toLifecycleStatus(order.status);
               const activeStep = getTimelineStep(normalizedStatus);
               const expanded = expandedOrderId === order.id;
               const orderNumber = order.order_number || `Order #${order.id}`;
+              const rejectionReason = order.rejection_reason?.trim();
               const stageColor =
                 normalizedStatus === "completed"
                   ? theme.colors.success
@@ -546,6 +546,7 @@ export default function CustomerMyOrdersPage() {
 
               return (
                 <View
+                  key={String(order.id)}
                   style={[
                     styles.row,
                     {
@@ -595,6 +596,11 @@ export default function CustomerMyOrdersPage() {
                   <Text style={[styles.decisionText, { color: stageColor }]}>
                     {getDecisionSummary(normalizedStatus, orderNumber)}
                   </Text>
+                  {normalizedStatus === "rejected" && rejectionReason ? (
+                    <Text style={[styles.rejectionText, { color: theme.colors.danger }]}>
+                      Rejection Reason: {rejectionReason}
+                    </Text>
+                  ) : null}
 
                   <View
                     style={[
@@ -795,6 +801,14 @@ export default function CustomerMyOrdersPage() {
                           { color: theme.colors.text },
                         ]}
                       >
+                        Company: {order.company_name || "N/A"}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
                         Priority: {(order.priority || "standard").toUpperCase()}
                       </Text>
                       <Text
@@ -805,6 +819,95 @@ export default function CustomerMyOrdersPage() {
                       >
                         Sample Count: {order.sample_count ?? 0}
                       </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Sample Type: {formatSampleType(order.sample_type)}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Compound Name: {order.compound_name || "N/A"}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Quantity: {order.quantity ?? "N/A"} {order.unit || ""}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Assigned Technician: {order.assigned_technician_name || "Awaiting assignment"}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Equipment: {order.equipment_name || "Pending"}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Scheduled Start: {order.scheduled_start ? new Date(order.scheduled_start).toLocaleString() : "N/A"}
+                      </Text>
+                      <Text
+                        style={[
+                          styles.detailLine,
+                          { color: theme.colors.text },
+                        ]}
+                      >
+                        Scheduled End: {order.scheduled_end ? new Date(order.scheduled_end).toLocaleString() : "N/A"}
+                      </Text>
+                      {order.notes ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          Notes: {order.notes}
+                        </Text>
+                      ) : null}
+                      {order.technician_status_note ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.primary },
+                          ]}
+                        >
+                          Technician Update: {order.technician_status_note}
+                        </Text>
+                      ) : null}
+                      {order.technician_status_updated_at ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          Update Time: {new Date(order.technician_status_updated_at).toLocaleString()}
+                          {order.technician_status_updated_by
+                            ? ` by ${order.technician_status_updated_by}`
+                            : ""}
+                        </Text>
+                      ) : null}
                       <Text
                         style={[
                           styles.detailLine,
@@ -829,12 +932,23 @@ export default function CustomerMyOrdersPage() {
                             ).toLocaleString()
                           : "N/A"}
                       </Text>
+                      {rejectionReason ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.danger },
+                          ]}
+                        >
+                          Admin Rejection Reason: {rejectionReason}
+                        </Text>
+                      ) : null}
                     </View>
                   ) : null}
                 </View>
               );
-            }}
-          />
+              })
+            )}
+          </View>
         </View>
       </View>
       {feedback.modal}
@@ -843,8 +957,8 @@ export default function CustomerMyOrdersPage() {
 }
 
 const styles = StyleSheet.create({
-  pageContent: { flex: 1 },
-  card: { flex: 1, borderWidth: 1, borderRadius: 20, padding: 16, gap: 10 },
+  pageContent: { paddingBottom: 8 },
+  card: { borderWidth: 1, borderRadius: 20, padding: 16, gap: 10 },
   banner: {
     borderWidth: 1,
     borderRadius: 14,
@@ -895,8 +1009,7 @@ const styles = StyleSheet.create({
   dropdownItemText: { fontSize: 12, fontWeight: "700" },
   applyBtn: { borderRadius: 10, paddingVertical: 9, alignItems: "center" },
   applyBtnText: { color: "#fff", fontSize: 12, fontWeight: "800" },
-  ordersList: { flex: 1 },
-  ordersListContent: { gap: 10, paddingBottom: 8 },
+  ordersList: { gap: 10, paddingBottom: 12 },
   row: { borderWidth: 1, borderRadius: 12, padding: 10, gap: 6 },
   orderTopRow: { flexDirection: "row", alignItems: "center", gap: 8 },
   title: { fontSize: 14, fontWeight: "800" },
@@ -905,6 +1018,7 @@ const styles = StyleSheet.create({
   statusPillText: { fontSize: 10, fontWeight: "800" },
   stageMeaning: { fontSize: 12, fontWeight: "700" },
   decisionText: { fontSize: 11, fontWeight: "700" },
+  rejectionText: { fontSize: 11, fontWeight: "700" },
   timelineRow: {
     borderWidth: 1,
     borderRadius: 10,

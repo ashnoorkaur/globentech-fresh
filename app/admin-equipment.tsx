@@ -15,6 +15,7 @@ import { adminMenu } from "../constants/role-menus";
 import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
 import { useFocusedPolling } from "../hooks/use-focused-polling";
+import { useCachedScreenState } from "../hooks/use-screen-cache";
 import {
     addEquipment,
     fetchEquipmentList,
@@ -27,24 +28,30 @@ export default function AdminEquipmentPage() {
   const theme = useAppTheme();
   const feedback = useFeedbackModal();
   const confirm = useConfirmModal();
-  const [equipment, setEquipment] = useState<EquipmentPayload[]>([]);
+  const [equipment, setEquipment] = useCachedScreenState<EquipmentPayload[]>(
+    "admin-equipment:equipment",
+    [],
+  );
   const [showFormModal, setShowFormModal] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
   const [name, setName] = useState("");
-  const [equipmentType, setEquipmentType] = useState("ICP");
-  const [processingTime, setProcessingTime] = useState("2");
-  const [warmupTime, setWarmupTime] = useState("10");
-  const [dailyCapacity, setDailyCapacity] = useState("200");
-  const [breakInterval, setBreakInterval] = useState("20");
-  const [breakDuration, setBreakDuration] = useState("10");
+  const [equipmentType, setEquipmentType] = useState("");
+  const [processingTime, setProcessingTime] = useState("");
+  const [warmupTime, setWarmupTime] = useState("");
+  const [dailyCapacity, setDailyCapacity] = useState("");
+  const [breakInterval, setBreakInterval] = useState("");
+  const [breakDuration, setBreakDuration] = useState("");
   const [lastMaintenance, setLastMaintenance] = useState("");
   const [isAvailable, setIsAvailable] = useState(true);
   const [errorText, setErrorText] = useState("");
   const [formErrorText, setFormErrorText] = useState("");
   const [formBusy, setFormBusy] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState("");
+  const [lastUpdated, setLastUpdated] = useCachedScreenState(
+    "admin-equipment:lastUpdated",
+    "",
+  );
 
   const loadEquipment = async () => {
     setErrorText("");
@@ -63,12 +70,12 @@ export default function AdminEquipmentPage() {
 
   const resetForm = () => {
     setName("");
-    setEquipmentType("ICP");
-    setProcessingTime("2");
-    setWarmupTime("10");
-    setDailyCapacity("200");
-    setBreakInterval("20");
-    setBreakDuration("10");
+    setEquipmentType("");
+    setProcessingTime("");
+    setWarmupTime("");
+    setDailyCapacity("");
+    setBreakInterval("");
+    setBreakDuration("");
     setLastMaintenance("");
     setIsAvailable(true);
     setFormErrorText("");
@@ -448,7 +455,7 @@ export default function AdminEquipmentPage() {
                 <TextInput
                   value={name}
                   onChangeText={setName}
-                  placeholder="Name"
+                  placeholder="Example: ICP Mass Spectrometer"
                   placeholderTextColor={theme.colors.textMuted}
                   style={[
                     styles.input,
@@ -465,7 +472,7 @@ export default function AdminEquipmentPage() {
                 <TextInput
                   value={equipmentType}
                   onChangeText={setEquipmentType}
-                  placeholder="Equipment Type"
+                  placeholder="Example: ICP"
                   placeholderTextColor={theme.colors.textMuted}
                   style={[
                     styles.input,
@@ -483,7 +490,7 @@ export default function AdminEquipmentPage() {
                   value={processingTime}
                   onChangeText={setProcessingTime}
                   keyboardType="numeric"
-                  placeholder="Processing"
+                  placeholder="Example: 15"
                   placeholderTextColor={theme.colors.textMuted}
                   style={[
                     styles.input,
@@ -501,7 +508,7 @@ export default function AdminEquipmentPage() {
                   value={warmupTime}
                   onChangeText={setWarmupTime}
                   keyboardType="numeric"
-                  placeholder="Warmup"
+                  placeholder="Example: 10"
                   placeholderTextColor={theme.colors.textMuted}
                   style={[
                     styles.input,
@@ -519,7 +526,7 @@ export default function AdminEquipmentPage() {
                   value={dailyCapacity}
                   onChangeText={setDailyCapacity}
                   keyboardType="numeric"
-                  placeholder="Capacity"
+                  placeholder="Example: 120"
                   placeholderTextColor={theme.colors.textMuted}
                   style={[
                     styles.input,
@@ -537,7 +544,7 @@ export default function AdminEquipmentPage() {
                   value={breakInterval}
                   onChangeText={setBreakInterval}
                   keyboardType="numeric"
-                  placeholder="Break Interval"
+                  placeholder="Example: 20"
                   placeholderTextColor={theme.colors.textMuted}
                   style={[
                     styles.input,
@@ -555,7 +562,7 @@ export default function AdminEquipmentPage() {
                   value={breakDuration}
                   onChangeText={setBreakDuration}
                   keyboardType="numeric"
-                  placeholder="Break Duration"
+                  placeholder="Example: 10"
                   placeholderTextColor={theme.colors.textMuted}
                   style={[
                     styles.input,

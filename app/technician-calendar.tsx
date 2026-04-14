@@ -1,12 +1,14 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { technicianMenu } from "../constants/role-menus";
 import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
 import { useFocusedPolling } from "../hooks/use-focused-polling";
+import { useCachedScreenState } from "../hooks/use-screen-cache";
 import {
+    assignOrderEquipment,
     completeQueueOrder,
     fetchTechnicianWorkQueue,
     rescheduleQueue,
@@ -104,10 +106,20 @@ export default function TechnicianCalendarPage() {
   const theme = useAppTheme();
   const feedback = useFeedbackModal();
   const confirm = useConfirmModal();
-  const [entries, setEntries] = useState<QueueEntry[]>([]);
-  const [equipment, setEquipment] = useState<EquipmentRow[]>([]);
+  const [entries, setEntries] = useCachedScreenState<QueueEntry[]>(
+    "technician-calendar:entries",
+    [],
+  );
+  const [equipment, setEquipment] = useCachedScreenState<EquipmentRow[]>(
+    "technician-calendar:equipment",
+    [],
+  );
   const [busyQueueId, setBusyQueueId] = useState<number | null>(null);
-  const [lastUpdated, setLastUpdated] = useState("");
+  const [equipmentTarget, setEquipmentTarget] = useState<QueueEntry | null>(null);
+  const [lastUpdated, setLastUpdated] = useCachedScreenState(
+    "technician-calendar:lastUpdated",
+    "",
+  );
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [draftStatus, setDraftStatus] = useState<StatusFilter>("all");
   const [statusOpen, setStatusOpen] = useState(false);
@@ -119,10 +131,9 @@ export default function TechnicianCalendarPage() {
       setEquipment(data.equipment ?? []);
       setLastUpdated(new Date().toLocaleTimeString());
     } catch {
-      setEntries([]);
-      setEquipment([]);
+      // Keep the last successful snapshot visible.
     }
-  }, []);
+  }, [setEntries, setEquipment, setLastUpdated]);
 
   useFocusedPolling(loadCalendar, { intervalMs: 12000 });
 
@@ -216,10 +227,14 @@ export default function TechnicianCalendarPage() {
         endBase.getTime() + 15 * 60 * 1000,
       ).toISOString();
       await rescheduleQueue(
-        entry.queue_id,
+        {
+          queueId: entry.queue_id,
+          orderId: entry.order_id,
+          orderNumber: entry.order_number,
+        },
         delayedStart,
         delayedEnd,
-        "Technician logged delay via mobile app",
+        "Technician logged a 15-minute delay via mobile app.",
       );
       await loadCalendar();
       feedback.showSuccess(
@@ -245,15 +260,6 @@ export default function TechnicianCalendarPage() {
         processingStartedAt,
       );
 
-      if (entry.queue_id > 0 && processingWindowEnd) {
-        await rescheduleQueue(
-          entry.queue_id,
-          processingStartedAt.toISOString(),
-          processingWindowEnd.toISOString(),
-          "Processing started from mobile app with minimum window applied",
-        );
-      }
-
       if (processingWindowEnd) {
         localProcessingLockUntilByOrderId.set(
           entry.order_id,
@@ -265,6 +271,11 @@ export default function TechnicianCalendarPage() {
         entry.order_id,
         entry.queue_id,
         entry.order_number,
+        {
+          scheduledStart: processingStartedAt.toISOString(),
+          scheduledEnd: processingWindowEnd?.toISOString(),
+          note: "Technician started processing from mobile app.",
+        },
       );
       await loadCalendar();
       feedback.showSuccess(
@@ -283,10 +294,51 @@ export default function TechnicianCalendarPage() {
     }
   };
 
+  const assignEquipment = async (
+    entry: QueueEntry,
+    selectedEquipment: Pick<EquipmentRow, "id" | "name"> | null,
+  ) => {
+    const lifecycle = toLifecycleStatus(entry.order_status);
+    if (lifecycle === "results_available" || lifecycle === "completed") {
+      setEquipmentTarget(null);
+      return;
+    }
+
+    setBusyQueueId(entry.queue_id);
+    try {
+      await assignOrderEquipment(
+        {
+          orderId: entry.order_id,
+          orderNumber: entry.order_number,
+          firebaseKey: entry.firebase_key,
+          status: entry.order_status,
+        },
+        selectedEquipment,
+      );
+      await loadCalendar();
+      setEquipmentTarget(null);
+      feedback.showSuccess(
+        selectedEquipment ? "Equipment Assigned" : "Equipment Cleared",
+        selectedEquipment
+          ? `${entry.order_number} is now using ${selectedEquipment.name}.`
+          : `${entry.order_number} no longer has assigned equipment.`,
+      );
+    } catch (error) {
+      feedback.showError(
+        "Equipment Update Failed",
+        error instanceof Error
+          ? error.message
+          : "Unable to assign equipment.",
+      );
+    } finally {
+      setBusyQueueId(null);
+    }
+  };
+
   return (
     <RoleContentPage
       title="Calendar"
-      subtitle="Calendar and queue management for active technician tasks."
+      subtitle="Calendar and queue management for technician orders assigned to you."
       role="Technician"
       activeKey="calendar"
       menuItems={technicianMenu}
@@ -521,6 +573,7 @@ export default function TechnicianCalendarPage() {
                     !alreadyCompleted &&
                     alreadyProcessing &&
                     !processingWindowActive;
+                  const canAssignEquipment = !alreadyCompleted;
 
                   return (
                     <>
@@ -548,6 +601,21 @@ export default function TechnicianCalendarPage() {
                       <Text
                         style={[styles.sub, { color: theme.colors.textMuted }]}
                       >
+                        Customer: {entry.customer_name || "N/A"} | Company: {entry.company_name || "N/A"}
+                      </Text>
+                      <Text
+                        style={[styles.sub, { color: theme.colors.textMuted }]}
+                      >
+                        Sample: {entry.sample_type || "N/A"} | Compound: {entry.compound_name || "N/A"}
+                      </Text>
+                      <Text
+                        style={[styles.sub, { color: theme.colors.textMuted }]}
+                      >
+                        Quantity: {entry.quantity ?? "N/A"} {entry.unit || ""}
+                      </Text>
+                      <Text
+                        style={[styles.sub, { color: theme.colors.textMuted }]}
+                      >
                         Equipment: {entry.equipment_name || "Unassigned"}
                       </Text>
                       <Text
@@ -570,6 +638,30 @@ export default function TechnicianCalendarPage() {
                         Estimated Completion:{" "}
                         {entry.estimated_completion || "Pending"}
                       </Text>
+                      {entry.notes ? (
+                        <Text
+                          style={[styles.subStrong, { color: theme.colors.text }]}
+                        >
+                          Notes: {entry.notes}
+                        </Text>
+                      ) : null}
+                      {entry.technician_status_note ? (
+                        <Text
+                          style={[styles.subStrong, { color: theme.colors.primary }]}
+                        >
+                          Latest Technician Update: {entry.technician_status_note}
+                        </Text>
+                      ) : null}
+                      {entry.technician_status_updated_at ? (
+                        <Text
+                          style={[styles.sub, { color: theme.colors.textMuted }]}
+                        >
+                          Updated: {new Date(entry.technician_status_updated_at).toLocaleString()}
+                          {entry.technician_status_updated_by
+                            ? ` by ${entry.technician_status_updated_by}`
+                            : ""}
+                        </Text>
+                      ) : null}
                       {processingWindowActive && processingWindowEnd ? (
                         <Text
                           style={[styles.sub, { color: theme.colors.warning }]}
@@ -687,6 +779,28 @@ export default function TechnicianCalendarPage() {
                             {entry.queue_id < 0 ? "Awaiting Slot" : "Delay"}
                           </Text>
                         </Pressable>
+                        <Pressable
+                          style={[
+                            styles.actionBtn,
+                            {
+                              backgroundColor: theme.colors.primary,
+                              opacity:
+                                busyQueueId === entry.queue_id || !canAssignEquipment
+                                  ? 0.7
+                                  : 1,
+                            },
+                          ]}
+                          disabled={
+                            busyQueueId === entry.queue_id || !canAssignEquipment
+                          }
+                          onPress={() => setEquipmentTarget(entry)}
+                        >
+                          <Text style={styles.actionBtnText}>
+                            {entry.equipment_name
+                              ? "Equipment"
+                              : "Assign Equip"}
+                          </Text>
+                        </Pressable>
                       </View>
                     </>
                   );
@@ -727,6 +841,105 @@ export default function TechnicianCalendarPage() {
           )}
         </View>
       </ScrollView>
+      <Modal
+        visible={Boolean(
+          equipmentTarget &&
+            toLifecycleStatus(equipmentTarget.order_status) !== "results_available" &&
+            toLifecycleStatus(equipmentTarget.order_status) !== "completed",
+        )}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEquipmentTarget(null)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View
+            style={[
+              styles.modalCard,
+              {
+                backgroundColor: theme.colors.surface,
+                borderColor: theme.colors.border,
+              },
+            ]}
+          >
+            <Text style={[styles.modalTitle, { color: theme.colors.text }]}>Assign Equipment</Text>
+            <Text style={[styles.modalSub, { color: theme.colors.textMuted }]}> 
+              {equipmentTarget?.order_number} will use the selected equipment in the shared live order flow.
+            </Text>
+            <ScrollView style={styles.modalList} contentContainerStyle={styles.modalListContent}>
+              {equipment.length === 0 ? (
+                <Text style={[styles.empty, { color: theme.colors.textMuted }]}>No equipment entries available.</Text>
+              ) : (
+                equipment.map((item) => {
+                  const selected =
+                    equipmentTarget?.equipment_id === item.id ||
+                    equipmentTarget?.equipment_name === item.name;
+                  return (
+                    <Pressable
+                      key={item.id}
+                      disabled={busyQueueId === equipmentTarget?.queue_id}
+                      onPress={() => {
+                        if (!equipmentTarget) return;
+                        void assignEquipment(equipmentTarget, item);
+                      }}
+                      style={[
+                        styles.modalOption,
+                        {
+                          borderColor: selected
+                            ? theme.colors.primary
+                            : theme.colors.border,
+                          backgroundColor: selected
+                            ? theme.colors.primarySoft
+                            : theme.colors.surfaceMuted,
+                          opacity:
+                            busyQueueId === equipmentTarget?.queue_id ? 0.7 : 1,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.modalOptionTitle, { color: theme.colors.text }]}>{item.name}</Text>
+                      <Text style={[styles.modalOptionSub, { color: theme.colors.textMuted }]}>
+                        {item.equipment_type || "Equipment"} | {item.is_available ? "Available" : "Busy"}
+                      </Text>
+                    </Pressable>
+                  );
+                })
+              )}
+            </ScrollView>
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => setEquipmentTarget(null)}
+                style={[
+                  styles.modalSecondaryBtn,
+                  {
+                    borderColor: theme.colors.border,
+                    backgroundColor: theme.colors.surfaceMuted,
+                  },
+                ]}
+              >
+                <Text style={[styles.modalSecondaryText, { color: theme.colors.text }]}>Close</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => {
+                  if (!equipmentTarget) return;
+                  void assignEquipment(equipmentTarget, null);
+                }}
+                disabled={!equipmentTarget || busyQueueId === equipmentTarget.queue_id}
+                style={[
+                  styles.modalPrimaryBtn,
+                  {
+                    backgroundColor: theme.colors.danger,
+                    opacity:
+                      !equipmentTarget || busyQueueId === equipmentTarget.queue_id
+                        ? 0.7
+                        : 1,
+                  },
+                ]}
+              >
+                <Text style={styles.modalPrimaryText}>Clear Equipment</Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
       {feedback.modal}
       {confirm.modal}
     </RoleContentPage>
@@ -800,4 +1013,41 @@ const styles = StyleSheet.create({
   },
   utilName: { fontSize: 13, fontWeight: "700" },
   utilCount: { fontSize: 13, fontWeight: "800" },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.45)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 20,
+  },
+  modalCard: {
+    width: "100%",
+    borderWidth: 1,
+    borderRadius: 16,
+    padding: 16,
+    gap: 12,
+  },
+  modalTitle: { fontSize: 18, fontWeight: "800" },
+  modalSub: { fontSize: 13, fontWeight: "600", lineHeight: 20 },
+  modalList: { maxHeight: 280 },
+  modalListContent: { gap: 8, paddingBottom: 4 },
+  modalOption: { borderWidth: 1, borderRadius: 12, padding: 10, gap: 2 },
+  modalOptionTitle: { fontSize: 14, fontWeight: "800" },
+  modalOptionSub: { fontSize: 12, lineHeight: 18 },
+  modalActions: { flexDirection: "row", gap: 10 },
+  modalSecondaryBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  modalSecondaryText: { fontSize: 12, fontWeight: "800" },
+  modalPrimaryBtn: {
+    flex: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  modalPrimaryText: { color: "#fff", fontSize: 12, fontWeight: "800" },
 });

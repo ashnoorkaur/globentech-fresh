@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useState } from "react";
 import {
-  Modal,
-  Pressable,
-  StyleSheet,
-  Text,
-  TextInput,
-  View,
+    Modal,
+    Pressable,
+    StyleSheet,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
@@ -13,11 +13,15 @@ import { adminMenu } from "../constants/role-menus";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
 import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
-  adminActivateUser,
-  adminChangeRole,
-  adminDeactivateUser,
-  fetchAdminUserList,
-  type ProfileDto,
+    hasCachedScreenState,
+    useCachedScreenState,
+} from "../hooks/use-screen-cache";
+import {
+    adminActivateUser,
+    adminChangeRole,
+    adminDeactivateUser,
+    fetchAdminUserList,
+    type ProfileDto,
 } from "../lib/account-api";
 import { fetchAdminUsers } from "../lib/admin-api";
 import { useAppTheme } from "../lib/theme";
@@ -45,7 +49,10 @@ const roleLabel = (role: ProfileDto["role"]) => {
 export default function AdminUsersPage() {
   const theme = useAppTheme();
   const feedback = useFeedbackModal();
-  const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [users, setUsers] = useCachedScreenState<ManagedUser[]>(
+    "admin-users:users",
+    [],
+  );
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<ProfileDto["role"] | "all">(
     "all",
@@ -61,14 +68,18 @@ export default function AdminUsersPage() {
   >("all");
   const [roleFilterOpen, setRoleFilterOpen] = useState(false);
   const [statusFilterOpen, setStatusFilterOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(
+    () => !hasCachedScreenState("admin-users:users"),
+  );
   const [errorText, setErrorText] = useState("");
   const [rolePickerId, setRolePickerId] = useState<number | null>(null);
   const [rolePickerVisible, setRolePickerVisible] = useState(false);
   const primaryGradient: [string, string] = ["#4F7CFF", "#8C5BEA"];
 
   const loadUsers = useCallback(async () => {
-    setLoading(true);
+    if (users.length === 0) {
+      setLoading(true);
+    }
     setErrorText("");
     try {
       const [profileResult, adminResult] = await Promise.allSettled([
@@ -132,7 +143,7 @@ export default function AdminUsersPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [setUsers, users.length]);
 
   useFocusedPolling(loadUsers, { intervalMs: 25000 });
 

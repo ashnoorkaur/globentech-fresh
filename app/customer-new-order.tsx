@@ -26,6 +26,7 @@ export default function CustomerNewOrderPage() {
   const [compoundName, setCompoundName] = useState("");
   const [quantity, setQuantity] = useState("");
   const [unit, setUnit] = useState<"" | "g" | "kg" | "mL" | "L">("");
+  const [notes, setNotes] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const feedback = useFeedbackModal();
 
@@ -49,8 +50,8 @@ export default function CustomerNewOrderPage() {
         quantity: Number(quantity),
         unit: unit as Exclude<typeof unit, "">,
         sample_count: Number(quantity),
+        notes: notes.trim() || undefined,
       });
-
       feedback.showSuccess(
         "Order Submitted Successfully",
         `Your order has been submitted. Reference: ${result.data?.order_number || "Pending"}. It is now Pending until admin accepts it.`,
@@ -62,6 +63,7 @@ export default function CustomerNewOrderPage() {
       setCompoundName("");
       setQuantity("");
       setUnit("");
+      setNotes("");
 
       // Move customer to live order tracking after submit.
       router.replace("/customer-my-orders");
@@ -392,6 +394,27 @@ export default function CustomerNewOrderPage() {
                 </View>
               </View>
 
+              <Text style={[styles.label, { color: theme.colors.text }]}>
+                Notes
+              </Text>
+              <TextInput
+                value={notes}
+                onChangeText={setNotes}
+                placeholder="Add extra instructions, testing context, or handling notes"
+                placeholderTextColor={theme.colors.textMuted}
+                multiline
+                textAlignVertical="top"
+                style={[
+                  styles.input,
+                  styles.notesInput,
+                  {
+                    color: theme.colors.text,
+                    borderColor: theme.colors.border,
+                    backgroundColor: theme.colors.inputBg,
+                  },
+                ]}
+              />
+
               <GradientButton
                 disabled={!canSubmit || submitting}
                 onPress={handleSubmit}
@@ -422,6 +445,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 10,
     fontSize: 14,
+  },
+  notesInput: {
+    minHeight: 96,
   },
   gridRow: { flexDirection: "row", gap: 10 },
   gridCol: { flex: 1, gap: 8 },

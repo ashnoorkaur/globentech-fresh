@@ -8,16 +8,38 @@
 import { apiRequest } from "./api-client";
 import { fetchSessionUser } from "./auth-api";
 import { getApiEndpoints } from "./backend-endpoints";
+import { createFirebaseOrder, fetchFirebaseCustomerOrders } from "./firebase-rest";
+import { emitLiveDataRefresh } from "./live-data";
+import { getSessionUser } from "./session-store";
 
 export type CustomerOrderRow = {
   id: number;
+  firebase_key?: string;
   order_number?: string;
   customer_name?: string;
+  company_name?: string;
   status?: string;
   priority?: string;
+  sample_type?: string;
+  compound_name?: string;
+  quantity?: number;
+  unit?: "g" | "kg" | "mL" | "L";
+  notes?: string;
+  rejection_reason?: string;
+  assigned_technician_uid?: string;
+  assigned_technician_name?: string;
+  assigned_technician_email?: string;
+  equipment_id?: number | null;
+  equipment_name?: string;
   sample_count?: number;
   created_at?: string;
   estimated_completion?: string;
+  scheduled_start?: string;
+  scheduled_end?: string;
+  technician_status_action?: string;
+  technician_status_note?: string;
+  technician_status_updated_at?: string;
+  technician_status_updated_by?: string;
 };
 
 export type CreateOrderPayload = {
@@ -102,6 +124,14 @@ export async function createCustomerOrder(
   const endpoints = getApiEndpoints();
 
   try {
+    const response = await createFirebaseOrder(payload, getSessionUser() || undefined);
+    emitLiveDataRefresh();
+    return response;
+  } catch {
+    // Continue to PHP fallback.
+  }
+
+  try {
     // Attempt initial request
     const response = await apiRequest<
       SuccessEnvelope<{ id?: number; order_number?: string; success?: boolean }>
@@ -111,6 +141,7 @@ export async function createCustomerOrder(
       timeoutMs: 12000,
     });
 
+    emitLiveDataRefresh();
     return response;
   } catch (error) {
     // If request timed out or auth failed, try to refresh session
@@ -140,6 +171,9 @@ export async function createCustomerOrder(
           method: "POST",
           body: payload,
           timeoutMs: 12000,
+        }).then((response) => {
+          emitLiveDataRefresh();
+          return response;
         });
       } catch (retryError) {
         throw new Error(
@@ -157,10 +191,21 @@ export async function createCustomerOrder(
  */
 export async function fetchCustomerMyOrders() {
   const endpoints = getApiEndpoints();
-  const response = await apiRequest<
-    CustomerOrderRow[] | SuccessEnvelope<CustomerOrderRow[]>
-  >(endpoints.customerMyOrders);
-  return toArray<CustomerOrderRow>(unwrap(response));
+  try {
+    return await fetchFirebaseCustomerOrders(getSessionUser() || undefined);
+  } catch {
+    // Continue to PHP fallback.
+  }
+  try {
+    const response = await apiRequest<
+      CustomerOrderRow[] | SuccessEnvelope<CustomerOrderRow[]>
+    >(endpoints.customerMyOrders);
+    return toArray<CustomerOrderRow>(unwrap(response));
+  } catch (error) {
+    throw new Error(
+      `Unable to load customer orders from the real backend. ${getOrderErrorMessage(error)}`,
+    );
+  }
 }
 
 /**
@@ -168,10 +213,23 @@ export async function fetchCustomerMyOrders() {
  */
 export async function fetchCustomerOrderHistory() {
   const endpoints = getApiEndpoints();
-  const response = await apiRequest<
-    CustomerOrderRow[] | SuccessEnvelope<CustomerOrderRow[]>
-  >(endpoints.customerOrderHistory);
-  return toArray<CustomerOrderRow>(unwrap(response));
+  try {
+    return (await fetchFirebaseCustomerOrders(getSessionUser() || undefined)).filter(
+      (order) => order.status === "completed",
+    );
+  } catch {
+    // Continue to PHP fallback.
+  }
+  try {
+    const response = await apiRequest<
+      CustomerOrderRow[] | SuccessEnvelope<CustomerOrderRow[]>
+    >(endpoints.customerOrderHistory);
+    return toArray<CustomerOrderRow>(unwrap(response));
+  } catch (error) {
+    throw new Error(
+      `Unable to load customer order history from the real backend. ${getOrderErrorMessage(error)}`,
+    );
+  }
 }
 
 /**

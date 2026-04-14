@@ -1,80 +1,44 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useMemo, useState } from "react";
-import { Pressable, StyleSheet, Text, View } from "react-native";
+import { StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
 import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
-  generateReport,
-  type ReportRequest,
-  type ReportResponse,
+    hasCachedScreenState,
+    useCachedScreenState,
+} from "../hooks/use-screen-cache";
+import {
+    generateReport,
+    type ReportRequest,
+    type ReportResponse,
 } from "../lib/admin-api";
 import { useAppTheme } from "../lib/theme";
 
 export default function AdminReportsPage() {
   const theme = useAppTheme();
-  const [type, setType] = useState<ReportRequest["type"]>("orders");
-  const [option, setOption] = useState("today");
-  const [report, setReport] = useState<ReportResponse | null>(null);
-  const [errorText, setErrorText] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState("");
-
-  const reportCards = useMemo(
-    () => [
-      {
-        title: "Orders Report",
-        description:
-          "View order statistics, processing times, and completion rates.",
-        type: "orders" as const,
-        options: ["today", "week", "month", "quarter", "year"],
-      },
-      {
-        title: "Revenue Report",
-        description:
-          "View payment statistics, revenue trends, and financial summaries.",
-        type: "revenue" as const,
-        options: ["today", "week", "month", "quarter", "year"],
-      },
-      {
-        title: "Equipment Performance",
-        description:
-          "View equipment utilization, delays, and maintenance history.",
-        type: "equipment" as const,
-        options: ["all", "icp", "xrf", "mass"],
-      },
-      {
-        title: "Queue Analytics",
-        description:
-          "View queue statistics, wait times, and processing efficiency.",
-        type: "queue" as const,
-        options: ["all", "standard", "priority"],
-      },
-    ],
-    [],
+  const [report, setReport] = useCachedScreenState<ReportResponse | null>(
+    "admin-reports:report",
+    null,
   );
+  const [errorText, setErrorText] = useState("");
+  const [loading, setLoading] = useState(
+    () => !hasCachedScreenState("admin-reports:report"),
+  );
+  const [lastUpdated, setLastUpdated] = useCachedScreenState(
+    "admin-reports:lastUpdated",
+    "",
+  );
+  const fixedRequest: ReportRequest = { type: "orders", option: "all" };
 
   const runReport = useCallback(async () => {
-    setLoading(true);
+    if (!report) {
+      setLoading(true);
+    }
     setErrorText("");
     try {
-      let result = await generateReport({ type, option });
-
-      // Fallback to safer default options if backend rejects a specific option.
-      if (
-        !result ||
-        (typeof result === "object" &&
-          !(result as any).summary &&
-          !(result as any).rows &&
-          !(result as any).data)
-      ) {
-        const fallbackOption =
-          type === "equipment" || type === "queue" ? "all" : "today";
-        result = await generateReport({ type, option: fallbackOption });
-      }
-
-      setReport(result);
+      setReport(await generateReport(fixedRequest));
       setLastUpdated(new Date().toLocaleTimeString());
     } catch (error) {
       setErrorText(
@@ -83,7 +47,7 @@ export default function AdminReportsPage() {
     } finally {
       setLoading(false);
     }
-  }, [type, option]);
+  }, [fixedRequest, report, setLastUpdated, setReport]);
 
   useFocusedPolling(runReport, { intervalMs: 30000 });
 
@@ -113,11 +77,6 @@ export default function AdminReportsPage() {
     if (reportRows.length > 0) return `Generated ${reportRows.length} rows.`;
     return "";
   }, [report, reportRows.length]);
-
-  const selectedCard = useMemo(
-    () => reportCards.find((c) => c.type === type),
-    [reportCards, type],
-  );
 
   const chartMetrics = useMemo(() => {
     const totals = new Map<string, number>();
@@ -188,82 +147,18 @@ export default function AdminReportsPage() {
             },
           ]}
         >
-          {reportCards.map((card) => {
-            const selected = card.type === type;
-            return (
-              <View
-                key={card.title}
-                style={[
-                  styles.reportCard,
-                  {
-                    borderColor: theme.colors.border,
-                    backgroundColor: theme.colors.surfaceMuted,
-                  },
-                ]}
-              >
-                <Text
-                  style={[styles.reportTitle, { color: theme.colors.text }]}
-                >
-                  {card.title}
-                </Text>
-                <Text
-                  style={[styles.reportDesc, { color: theme.colors.textMuted }]}
-                >
-                  {card.description}
-                </Text>
-
-                <View style={styles.optionRow}>
-                  {card.options.map((opt) => {
-                    const optActive = selected && option === opt;
-                    return (
-                      <Pressable
-                        key={opt}
-                        onPress={() => {
-                          setType(card.type);
-                          setOption(opt);
-                        }}
-                        style={[
-                          styles.optionChip,
-                          {
-                            borderColor: optActive
-                              ? theme.colors.primary
-                              : theme.colors.border,
-                            backgroundColor: optActive
-                              ? theme.colors.primarySoft
-                              : theme.colors.surface,
-                          },
-                        ]}
-                      >
-                        <Text
-                          style={[
-                            styles.optionText,
-                            {
-                              color: optActive
-                                ? theme.colors.primary
-                                : theme.colors.textMuted,
-                            },
-                          ]}
-                        >
-                          {opt}
-                        </Text>
-                      </Pressable>
-                    );
-                  })}
-                </View>
-
-                <GradientButton
-                  onPress={runReport}
-                  style={styles.actionBtn}
-                  colors={actionGradient}
-                  compact
-                >
-                  <Text style={styles.actionBtnText}>
-                    {loading && selected ? "Generating..." : "Generate Now"}
-                  </Text>
-                </GradientButton>
-              </View>
-            );
-          })}
+          <Text style={[styles.reportTitle, { color: theme.colors.text }]}>Realtime Orders Report</Text>
+          <Text style={[styles.reportDesc, { color: theme.colors.textMuted }]}>Live Firebase-backed report for all orders. This view updates automatically and keeps only the real report output.</Text>
+          <GradientButton
+            onPress={runReport}
+            style={styles.actionBtn}
+            colors={actionGradient}
+            compact
+          >
+            <Text style={styles.actionBtnText}>
+              {loading ? "Refreshing..." : "Refresh Report"}
+            </Text>
+          </GradientButton>
         </View>
 
         <View
@@ -275,9 +170,7 @@ export default function AdminReportsPage() {
             },
           ]}
         >
-          <Text style={[styles.outputTitle, { color: theme.colors.text }]}>
-            {selectedCard?.title || "Report Output"}
-          </Text>
+          <Text style={[styles.outputTitle, { color: theme.colors.text }]}>Report Output</Text>
           {errorText ? (
             <Text style={[styles.errorText, { color: theme.colors.danger }]}>
               {errorText}

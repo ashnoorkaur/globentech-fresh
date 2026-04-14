@@ -24,10 +24,9 @@ export const customerMenu: MenuItem[] = [
 export const adminMenu: MenuItem[] = [
   { key: "dashboard", label: "Dashboard", route: "/admin-dashboard" },
   { key: "approvals", label: "Approvals", route: "/admin-approvals" },
-  { key: "calendar", label: "Calendar", route: "/admin-calendar" },
   {
     key: "order-history",
-    label: "Order History",
+    label: "Orders & Assignments",
     route: "/admin-order-history",
   },
   { key: "users", label: "Manage Users", route: "/admin-users" },

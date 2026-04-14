@@ -8,13 +8,22 @@ type RequestOptions = {
   body?: unknown;
   headers?: Record<string, string>;
   timeoutMs?: number;
+  noCache?: boolean;
 };
 
 type ApiErrorPayload = {
   message?: string;
 };
 
-const DEFAULT_TIMEOUT_MS = 12000;
+type CacheEntry<T> = {
+  data: T;
+  timestamp: number;
+};
+
+const DEFAULT_TIMEOUT_MS = 12000; // GET requests: 12 seconds
+const MUTATION_TIMEOUT_MS = 8000; // POST/PUT/DELETE: 8 seconds
+const CACHE_TTL_MS = 15000; // 15 second cache for GET requests
+const responseCache = new Map<string, CacheEntry<unknown>>();
 
 const normalizeBaseUrl = (url: string) => url.replace(/\/+$/, "");
 
@@ -141,19 +150,33 @@ export async function apiRequest<T>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
-  const candidates = getApiBaseUrlCandidates();
+  const method = options.method ?? "GET";
+  const cacheKey = `${method}:${path}`;
+
+  // Check cache for GET requests if not disabled
+  if (method === "GET" && !options.noCache) {
+    const cached = responseCache.get(cacheKey) as CacheEntry<T> | undefined;
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
+      return cached.data;
+    }
+  }
+
+  const candidates = getApiBaseUrlCandidates().slice(0, 2); // Only try primary + 1 fallback
   let lastError: Error | null = null;
+  
+  // Use aggressive timeout for mutations, standard for GET
+  const timeoutMs = options.timeoutMs ?? (method === "GET" ? DEFAULT_TIMEOUT_MS : MUTATION_TIMEOUT_MS);
 
   for (const base of candidates) {
     const controller = new AbortController();
     const timeout = setTimeout(
       () => controller.abort(),
-      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      timeoutMs,
     );
 
     try {
       const response = await fetch(makeUrlWithBase(base, path), {
-        method: options.method ?? "GET",
+        method,
         headers: {
           "Content-Type": "application/json",
           ...(options.headers ?? {}),
@@ -177,6 +200,14 @@ export async function apiRequest<T>(
         );
       }
 
+      // Cache successful GET responses
+      if (method === "GET") {
+        responseCache.set(cacheKey, {
+          data: data as T,
+          timestamp: Date.now(),
+        });
+      }
+
       return data as T;
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
@@ -191,4 +222,8 @@ export async function apiRequest<T>(
   throw (
     lastError ?? new Error("Request failed. No backend candidates responded.")
   );
+}
+
+export function clearApiCache() {
+  responseCache.clear();
 }

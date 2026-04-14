@@ -1,9 +1,19 @@
 import { apiRequest, getApiBaseUrlCandidates } from "./api-client";
 import { getApiEndpoints } from "./backend-endpoints";
+import {
+    fetchFirebaseAdminUserProfiles,
+    fetchFirebaseProfileByEmail,
+    fetchFirebaseSessionProfile,
+    updateFirebaseProfile,
+    updateFirebaseUserActive,
+    updateFirebaseUserRole
+} from "./firebase-rest";
+import { emitLiveDataRefresh } from "./live-data";
 import { getWebRoutes } from "./web-routes";
 
 export type ProfileDto = {
   id: number;
+  uid?: string;
   full_name: string;
   email: string;
   phone?: string;
@@ -137,15 +147,21 @@ const deriveNameFromEmail = (email: string) => {
 
 const fetchLegacyProfilePage = async () => {
   const route = getWebRoutes().accountSettings;
-  const candidates = getApiBaseUrlCandidates();
+  const candidates = getApiBaseUrlCandidates().slice(0, 2); // Only try primary + 1 fallback
   let lastError: Error | null = null;
 
   for (const base of candidates) {
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 second timeout for GET
+
       const res = await fetch(`${base}${route}`, {
         method: "GET",
         credentials: "include",
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       if (res.status === 404) continue;
       if (!res.ok) {
@@ -417,6 +433,12 @@ export async function fetchMyProfile() {
   const endpoints = getApiEndpoints();
 
   try {
+    return await fetchFirebaseSessionProfile();
+  } catch {
+    // continue
+  }
+
+  try {
     const response = await apiRequest<ProfileDto | SuccessEnvelope<ProfileDto>>(
       endpoints.accountProfile,
     );
@@ -530,6 +552,27 @@ export async function updateMyProfile(payload: ProfileUpdatePayload) {
   const endpoints = getApiEndpoints();
 
   try {
+    const result = await updateFirebaseProfile(payload);
+    emitLiveDataRefresh();
+    return result;
+  } catch {
+    // If the Firebase session is missing but we can still resolve the current
+    // profile via backend session cookies, restore the Firebase session by
+    // email and retry there before falling back to PHP endpoints.
+    try {
+      const profile = await fetchMyProfile();
+      if (profile.email) {
+        await fetchFirebaseProfileByEmail(profile.email);
+        const result = await updateFirebaseProfile(payload);
+        emitLiveDataRefresh();
+        return result;
+      }
+    } catch {
+      // Continue to API/PHP fallback.
+    }
+  }
+
+  try {
     const result = await apiRequest<{ success?: boolean; message?: string }>(
       endpoints.accountUpdateProfile,
       {
@@ -540,12 +583,14 @@ export async function updateMyProfile(payload: ProfileUpdatePayload) {
         },
       },
     );
+    emitLiveDataRefresh();
     return result;
   } catch {
     // The JSON API endpoint may not be wired up on all backend deployments.
     // Always fall back to the legacy PHP form POST which uses the standard
     // session cookie and works on any deployment.
     await postLegacyProfileUpdate(payload);
+    emitLiveDataRefresh();
     return { success: true, message: "Profile updated." };
   }
 }
@@ -647,7 +692,7 @@ export async function changeMyPassword(
 
 export async function deactivateSelfAccount() {
   const endpoints = getApiEndpoints();
-  return apiRequest<{ success?: boolean; message?: string }>(
+  const response = await apiRequest<{ success?: boolean; message?: string }>(
     endpoints.accountDeactivateSelf,
     {
       method: "POST",
@@ -656,10 +701,18 @@ export async function deactivateSelfAccount() {
       },
     },
   );
+  emitLiveDataRefresh();
+  return response;
 }
 
 export async function fetchAdminUserList() {
   const endpoints = getApiEndpoints();
+
+  try {
+    return await fetchFirebaseAdminUserProfiles();
+  } catch {
+    // continue
+  }
 
   const loadFromLegacy = async () => {
     const html = await fetchLegacyUsersPage();
@@ -693,7 +746,14 @@ export async function adminChangeRole(
 ) {
   const endpoints = getApiEndpoints();
   try {
-    return await apiRequest<{ success?: boolean; message?: string }>(
+    const response = await updateFirebaseUserRole(userId, role);
+    emitLiveDataRefresh();
+    return response;
+  } catch {
+    // continue
+  }
+  try {
+    const response = await apiRequest<{ success?: boolean; message?: string }>(
       endpoints.accountAdminChangeRole,
       {
         method: "POST",
@@ -704,15 +764,25 @@ export async function adminChangeRole(
         },
       },
     );
+    emitLiveDataRefresh();
+    return response;
   } catch {
     await postLegacyRoleChange(userId, role);
+    emitLiveDataRefresh();
     return { success: true, message: "Role updated via legacy backend." };
   }
 }
 
 export async function adminDeactivateUser(userId: number) {
   const endpoints = getApiEndpoints();
-  return apiRequest<{ success?: boolean; message?: string }>(
+  try {
+    const response = await updateFirebaseUserActive(userId, false);
+    emitLiveDataRefresh();
+    return response;
+  } catch {
+    // continue
+  }
+  const response = await apiRequest<{ success?: boolean; message?: string }>(
     endpoints.accountAdminDeactivateUser,
     {
       method: "POST",
@@ -722,11 +792,20 @@ export async function adminDeactivateUser(userId: number) {
       },
     },
   );
+  emitLiveDataRefresh();
+  return response;
 }
 
 export async function adminActivateUser(userId: number) {
   const endpoints = getApiEndpoints();
-  return apiRequest<{ success?: boolean; message?: string }>(
+  try {
+    const response = await updateFirebaseUserActive(userId, true);
+    emitLiveDataRefresh();
+    return response;
+  } catch {
+    // continue
+  }
+  const response = await apiRequest<{ success?: boolean; message?: string }>(
     endpoints.accountAdminActivateUser,
     {
       method: "POST",
@@ -736,4 +815,6 @@ export async function adminActivateUser(userId: number) {
       },
     },
   );
+  emitLiveDataRefresh();
+  return response;
 }

@@ -31,25 +31,17 @@ export default function LoginPage() {
     try {
       setDebugRoleText("");
       const user = await loginWithPassword(email.trim(), password);
-
       setSessionUser(user);
 
       const role = (user.role || "").toLowerCase();
+      setDebugRoleText(`Detected role: ${user.role} (${role})`);
       const targetRoute =
         role === "administrator" || role === "admin"
           ? "/admin-dashboard"
           : role === "technician" || role === "tech"
             ? "/technician-dashboard"
             : "/customer-dashboard";
-
-      if (__DEV__) {
-        setDebugRoleText(
-          `Resolved role: ${role || "unknown"} -> ${targetRoute}`,
-        );
-        await new Promise<void>((resolve) => setTimeout(resolve, 700));
-      }
-
-      router.replace(targetRoute);
+      setTimeout(() => router.replace(targetRoute), 500);
     } catch (error) {
       feedback.showError(
         "Login failed",

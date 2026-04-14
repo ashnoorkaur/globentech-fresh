@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { fetchPendingOrders } from "./admin-api";
+import { fetchAdminOrderHistory } from "./admin-api";
 import { fetchTechnicianWorkQueue } from "./calendar-api";
 import { fetchAdminContactNotifications } from "./contact-notifications-api";
 import { normalizeOrderStatusForCompare } from "./order-status-normalize";
@@ -21,13 +21,43 @@ type NotificationsState = {
   items: AppNotification[];
 };
 
+type NotificationOrderRow = {
+  id: number | string;
+  status?: string;
+  order_number?: string;
+  assigned_technician_uid?: string;
+  assigned_technician_name?: string;
+  assigned_technician_email?: string;
+  scheduled_start?: string | null;
+  scheduled_end?: string | null;
+  estimated_completion?: string | null;
+  rejection_reason?: string | null;
+  technician_status_action?: string | null;
+  technician_status_note?: string | null;
+  technician_status_updated_at?: string | null;
+  equipment_name?: string | null;
+};
+
+type OrderNotificationSnapshot = {
+  status: string;
+  assignedTechnician: string;
+  scheduledStart: string;
+  scheduledEnd: string;
+  estimatedCompletion: string;
+  rejectionReason: string;
+  technicianAction: string;
+  technicianNote: string;
+  technicianUpdatedAt: string;
+  equipmentName: string;
+};
+
 let state: NotificationsState = {
   items: [],
 };
 
 const NOTIFICATION_SYNC_INTERVAL_MS = 25000;
 
-let previousByRole: Record<string, Record<string, string>> = {
+let previousByRole: Record<string, Record<string, OrderNotificationSnapshot>> = {
   administrator: {},
   customer: {},
   technician: {},
@@ -136,19 +166,52 @@ const syncAdminContactNotificationsFromBackend = async () => {
   });
 };
 
-const createSnapshot = (
-  rows: Array<{ id: number | string; status?: string }>,
-) => {
-  const next: Record<string, string> = {};
+const toSnapshotValue = (value?: string | null) => (value || "").trim();
+
+const toStatusText = (value: string) => value.replace(/_/g, " ");
+
+const createSnapshot = (rows: NotificationOrderRow[]) => {
+  const next: Record<string, OrderNotificationSnapshot> = {};
   rows.forEach((row) => {
-    next[String(row.id)] = normalizeOrderStatusForCompare(row.status);
+    next[String(row.id)] = {
+      status: normalizeOrderStatusForCompare(row.status),
+      assignedTechnician:
+        toSnapshotValue(row.assigned_technician_name) ||
+        toSnapshotValue(row.assigned_technician_email) ||
+        toSnapshotValue(row.assigned_technician_uid),
+      scheduledStart: toSnapshotValue(row.scheduled_start),
+      scheduledEnd: toSnapshotValue(row.scheduled_end),
+      estimatedCompletion: toSnapshotValue(row.estimated_completion),
+      rejectionReason: toSnapshotValue(row.rejection_reason),
+      technicianAction: toSnapshotValue(row.technician_status_action),
+      technicianNote: toSnapshotValue(row.technician_status_note),
+      technicianUpdatedAt: toSnapshotValue(row.technician_status_updated_at),
+      equipmentName: toSnapshotValue(row.equipment_name),
+    };
   });
   return next;
 };
 
+const routeForRole = (
+  role: "administrator" | "customer" | "technician",
+  status?: string,
+) => {
+  if (role === "administrator") {
+    return status === "pending" ? "/admin-approvals" : "/admin-order-history";
+  }
+  if (role === "customer") return "/customer-my-orders";
+  return "/technician-calendar";
+};
+
+const formatScheduleMessage = (snapshot: OrderNotificationSnapshot) => {
+  const start = snapshot.scheduledStart || "schedule pending";
+  const end = snapshot.scheduledEnd || snapshot.estimatedCompletion || "end time pending";
+  return `Schedule updated: ${start} to ${end}.`;
+};
+
 const syncWithSnapshot = (
   role: "administrator" | "customer" | "technician",
-  rows: Array<{ id: number | string; status?: string; order_number?: string }>,
+  rows: NotificationOrderRow[],
 ) => {
   const current = createSnapshot(rows);
   const previous = previousByRole[role] || {};
@@ -161,38 +224,83 @@ const syncWithSnapshot = (
 
   rows.forEach((row) => {
     const key = String(row.id);
-    const prevStatus = previous[key];
-    const currentStatus = normalizeOrderStatusForCompare(row.status);
+    const prevSnapshot = previous[key];
+    const currentSnapshot = current[key];
+    const currentStatus = currentSnapshot.status;
     const orderRef = row.order_number || `Order #${row.id}`;
 
-    if (!prevStatus) {
+    if (!prevSnapshot) {
       pushNotification(
         role === "administrator" ? "New Customer Order" : "New Order Update",
         role === "administrator"
           ? `${orderRef} is waiting for approval.`
           : `${orderRef} has been added.`,
         "orders",
-        role === "administrator"
-          ? "/admin-approvals"
-          : role === "customer"
-            ? "/customer-my-orders"
-            : "/technician-tasks",
+        routeForRole(role, currentStatus),
       );
       return;
     }
 
-    if (prevStatus !== currentStatus) {
+    if (prevSnapshot.status !== currentStatus) {
       pushNotification(
         role === "customer"
           ? "Your Order Status Changed"
           : "Order Status Changed",
-        `${orderRef} changed from ${prevStatus} to ${currentStatus}.`,
+        `${orderRef} changed from ${toStatusText(prevSnapshot.status)} to ${toStatusText(currentStatus)}.`,
         "orders",
-        role === "administrator"
-          ? "/admin-approvals"
-          : role === "customer"
-            ? "/customer-my-orders"
-            : "/technician-tasks",
+        routeForRole(role, currentStatus),
+      );
+      return;
+    }
+
+    if (prevSnapshot.assignedTechnician !== currentSnapshot.assignedTechnician) {
+      pushNotification(
+        role === "customer" ? "Order Assignment Updated" : "Technician Assignment Updated",
+        currentSnapshot.assignedTechnician
+          ? `${orderRef} is now assigned to ${currentSnapshot.assignedTechnician}.`
+          : `${orderRef} no longer has an assigned technician.`,
+        "orders",
+        routeForRole(role, currentStatus),
+      );
+      return;
+    }
+
+    if (
+      prevSnapshot.scheduledStart !== currentSnapshot.scheduledStart ||
+      prevSnapshot.scheduledEnd !== currentSnapshot.scheduledEnd ||
+      prevSnapshot.estimatedCompletion !== currentSnapshot.estimatedCompletion
+    ) {
+      pushNotification(
+        "Order Schedule Updated",
+        `${orderRef}: ${formatScheduleMessage(currentSnapshot)}`,
+        "orders",
+        routeForRole(role, currentStatus),
+      );
+      return;
+    }
+
+    if (prevSnapshot.equipmentName !== currentSnapshot.equipmentName && currentSnapshot.equipmentName) {
+      pushNotification(
+        "Equipment Updated",
+        `${orderRef} is now scheduled on ${currentSnapshot.equipmentName}.`,
+        "orders",
+        routeForRole(role, currentStatus),
+      );
+      return;
+    }
+
+    if (
+      prevSnapshot.technicianUpdatedAt !== currentSnapshot.technicianUpdatedAt ||
+      prevSnapshot.technicianAction !== currentSnapshot.technicianAction ||
+      prevSnapshot.technicianNote !== currentSnapshot.technicianNote
+    ) {
+      pushNotification(
+        "Technician Update",
+        currentSnapshot.technicianNote
+          ? `${orderRef}: ${currentSnapshot.technicianNote}`
+          : `${orderRef} received a technician update.`,
+        "orders",
+        routeForRole(role, currentStatus),
       );
     }
   });
@@ -218,16 +326,36 @@ export async function syncNotificationsForRole(role?: string) {
     try {
       if (roleKey === "administrator") {
         flushAdminContactAlerts();
-        await syncAdminContactNotificationsFromBackend();
-        const rows = await fetchPendingOrders();
-        syncWithSnapshot(
-          "administrator",
-          rows.map((r) => ({
-            id: r.id,
-            status: "pending",
-            order_number: r.order_number,
-          })),
-        );
+        
+        // Parallelize admin sync operations with partial success support
+        const [contactResult, ordersResult] = await Promise.allSettled([
+          syncAdminContactNotificationsFromBackend(),
+          fetchAdminOrderHistory(),
+        ]);
+        
+        // Process successful results
+        if (ordersResult.status === "fulfilled") {
+          syncWithSnapshot(
+            "administrator",
+            ordersResult.value.map((r) => ({
+              id: r.id,
+              status: r.status,
+              order_number: r.order_number,
+              assigned_technician_uid: r.assigned_technician_uid,
+              assigned_technician_name: r.assigned_technician_name,
+              assigned_technician_email: r.assigned_technician_email,
+              scheduled_start: r.scheduled_start,
+              scheduled_end: r.scheduled_end,
+              estimated_completion: r.estimated_completion,
+              rejection_reason: r.rejection_reason,
+              technician_status_action: r.technician_status_action,
+              technician_status_note: r.technician_status_note,
+              technician_status_updated_at: r.technician_status_updated_at,
+              equipment_name: r.equipment_name,
+            })),
+          );
+        }
+        lastSyncAtByRole[roleKey] = Date.now();
         return;
       }
 
@@ -239,8 +367,20 @@ export async function syncNotificationsForRole(role?: string) {
             id: r.id,
             status: normalizeOrderStatusForCompare(r.status),
             order_number: r.order_number,
+            assigned_technician_uid: r.assigned_technician_uid,
+            assigned_technician_name: r.assigned_technician_name,
+            assigned_technician_email: r.assigned_technician_email,
+            scheduled_start: r.scheduled_start,
+            scheduled_end: r.scheduled_end,
+            estimated_completion: r.estimated_completion,
+            rejection_reason: r.rejection_reason,
+            technician_status_action: r.technician_status_action,
+            technician_status_note: r.technician_status_note,
+            technician_status_updated_at: r.technician_status_updated_at,
+            equipment_name: r.equipment_name,
           })),
         );
+        lastSyncAtByRole[roleKey] = Date.now();
         return;
       }
 
@@ -252,6 +392,16 @@ export async function syncNotificationsForRole(role?: string) {
           id: r.order_id,
           status: normalizeOrderStatusForCompare(r.order_status),
           order_number: r.order_number,
+          assigned_technician_uid: r.assigned_technician_uid,
+          assigned_technician_name: r.assigned_technician_name,
+          assigned_technician_email: r.assigned_technician_email,
+          scheduled_start: r.scheduled_start,
+          scheduled_end: r.scheduled_end,
+          estimated_completion: r.estimated_completion,
+          technician_status_action: r.technician_status_action,
+          technician_status_note: r.technician_status_note,
+          technician_status_updated_at: r.technician_status_updated_at,
+          equipment_name: r.equipment_name,
         })),
       );
     } catch {

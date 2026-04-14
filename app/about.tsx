@@ -1,12 +1,12 @@
 import { router } from "expo-router";
 import { useMemo } from "react";
-import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import {
-  adminMenu,
-  customerMenu,
-  guestMenu,
-  technicianMenu,
+    adminMenu,
+    customerMenu,
+    guestMenu,
+    technicianMenu,
 } from "../constants/role-menus";
 import { useSessionState } from "../lib/session-store";
 import { useAppTheme } from "../lib/theme";
@@ -14,6 +14,14 @@ import { useAppTheme } from "../lib/theme";
 export default function AboutPage() {
   const theme = useAppTheme();
   const session = useSessionState();
+  const workflowSteps = [
+    "Customer submits order and sample details.",
+    "Admin reviews pending requests.",
+    "Admin approves/rejects and order state changes.",
+    "Approved orders move into queue/calendar scheduling.",
+    "Technician executes queue and calendar operations.",
+    "Completion updates order to results available/completed and can trigger notifications.",
+  ];
 
   const menuItems = useMemo(() => {
     const role = session.user?.role;
@@ -41,37 +49,13 @@ export default function AboutPage() {
   return (
     <RoleContentPage
       title="About"
-      subtitle="Project, team, and prototype information."
+      subtitle="Project overview, workflow, and team details."
       role={roleLabel}
       activeKey="about"
       menuItems={menuItems}
       dashboardRoute={dashboardRoute}
     >
-      <ScrollView style={{ flex: 1 }} contentContainerStyle={{ gap: 10 }}>
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: theme.colors.surface,
-              borderColor: theme.colors.border,
-            },
-          ]}
-        >
-          <Text style={[styles.heading, { color: theme.colors.text }]}>
-            System Information
-          </Text>
-          <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
-            Project: Phase 3 Prototype
-          </Text>
-          <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
-            Status: Development
-          </Text>
-          <Text style={[styles.note, { color: theme.colors.textMuted }]}>
-            Note: This is a school project prototype demonstrating core
-            functionality.
-          </Text>
-        </View>
-
+      <View style={{ gap: 10, paddingBottom: 8 }}>
         <View
           style={[
             styles.card,
@@ -85,13 +69,41 @@ export default function AboutPage() {
             Project Information
           </Text>
           <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
-            Course: CPSY 301-D
+            Product: GlobenTech Mobile Laboratory Workflow
           </Text>
           <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
-            Phase 3 Prototype
+            Course: PROJ-309-SD
           </Text>
           <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
-            SAIT - 2025
+            Institution: SAIT
+          </Text>
+          <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
+            Delivery Year: 2026
+          </Text>
+        </View>
+
+        <View
+          style={[
+            styles.card,
+            {
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border,
+            },
+          ]}
+        >
+          <Text style={[styles.heading, { color: theme.colors.text }]}>
+            Core Workflow
+          </Text>
+          {workflowSteps.map((step, index) => (
+            <Text
+              key={step}
+              style={[styles.copy, { color: theme.colors.textMuted }]}
+            >
+              {index + 1}. {step}
+            </Text>
+          ))}
+          <Text style={[styles.note, { color: theme.colors.textMuted }]}> 
+            All customer, admin, and technician screens now follow the same live order timeline so approvals, queue scheduling, technician execution, and completion visibility stay aligned.
           </Text>
         </View>
 
@@ -168,7 +180,7 @@ export default function AboutPage() {
             </Pressable>
           </View>
         ) : null}
-      </ScrollView>
+      </View>
     </RoleContentPage>
   );
 }

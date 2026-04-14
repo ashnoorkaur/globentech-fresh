@@ -1,5 +1,11 @@
 import { apiRequest } from "./api-client";
 import { getApiEndpoints } from "./backend-endpoints";
+import {
+    addFirebaseEquipment,
+    fetchFirebaseEquipmentList,
+    updateFirebaseEquipment,
+} from "./firebase-rest";
+import { emitLiveDataRefresh } from "./live-data";
 
 export type EquipmentPayload = {
   id?: number;
@@ -70,6 +76,11 @@ const buildMutationPayload = (
 
 export async function fetchEquipmentList() {
   const endpoints = getApiEndpoints();
+  try {
+    return await fetchFirebaseEquipmentList();
+  } catch {
+    // Continue to PHP fallback.
+  }
   const response = await apiRequest<
     | EquipmentListResponse
     | EquipmentPayload[]
@@ -87,6 +98,13 @@ export async function fetchEquipmentList() {
 
 export async function addEquipment(payload: EquipmentPayload) {
   const endpoints = getApiEndpoints();
+  try {
+    const result = await addFirebaseEquipment(payload);
+    emitLiveDataRefresh();
+    return result;
+  } catch {
+    // Continue to PHP fallback.
+  }
   const response = await apiRequest<
     EquipmentMutationResponse | SuccessEnvelope<EquipmentMutationResponse>
   >(endpoints.equipmentAdd, {
@@ -94,11 +112,20 @@ export async function addEquipment(payload: EquipmentPayload) {
     body: buildMutationPayload(payload, "add"),
   });
 
-  return unwrap(response);
+  const result = unwrap(response);
+  emitLiveDataRefresh();
+  return result;
 }
 
 export async function updateEquipment(payload: EquipmentPayload) {
   const endpoints = getApiEndpoints();
+  try {
+    const result = await updateFirebaseEquipment(payload);
+    emitLiveDataRefresh();
+    return result;
+  } catch {
+    // Continue to PHP fallback.
+  }
   const response = await apiRequest<
     EquipmentMutationResponse | SuccessEnvelope<EquipmentMutationResponse>
   >(endpoints.equipmentUpdate, {
@@ -106,5 +133,7 @@ export async function updateEquipment(payload: EquipmentPayload) {
     body: buildMutationPayload(payload, "update"),
   });
 
-  return unwrap(response);
+  const result = unwrap(response);
+  emitLiveDataRefresh();
+  return result;
 }

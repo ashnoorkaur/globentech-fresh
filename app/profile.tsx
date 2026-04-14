@@ -5,10 +5,10 @@ import { ScrollView, StyleSheet, Switch, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import {
-  adminMenu,
-  customerMenu,
-  guestMenu,
-  technicianMenu,
+    adminMenu,
+    customerMenu,
+    guestMenu,
+    technicianMenu,
 } from "../constants/role-menus";
 import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
@@ -23,6 +23,7 @@ import { getIsDarkMode, setDarkMode, useAppTheme } from "../lib/theme";
 const isRolePlaceholderName = (value?: string) => {
   const normalized = (value || "").trim().toLowerCase();
   return (
+    normalized === "session" ||
     normalized === "authenticated user" ||
     normalized === "customer" ||
     normalized === "technician" ||
@@ -78,7 +79,10 @@ export default function ProfilePage() {
   const loadData = useCallback(async () => {
     try {
       const p = await fetchMyProfile();
-      setProfile(p);
+      setProfile({
+        ...p,
+        role: session.user?.role || p.role,
+      });
       // Sync session store with fetched profile data
       const resolvedName = !isRolePlaceholderName(p.full_name)
         ? p.full_name
@@ -87,7 +91,7 @@ export default function ProfilePage() {
         id: p.id,
         full_name: resolvedName,
         email: p.email,
-        role: p.role,
+        role: session.user?.role || p.role,
       });
     } catch {
       // Customer profile endpoint can occasionally fail on some backend paths;
@@ -119,7 +123,7 @@ export default function ProfilePage() {
           id: resolvedId,
           full_name: resolvedName,
           email: resolvedEmail,
-          role: sessionUser.role,
+          role: session.user?.role || sessionUser.role,
           is_active: prev?.is_active ?? true,
           phone: prev?.phone,
           company_name: prev?.company_name,
@@ -160,11 +164,11 @@ export default function ProfilePage() {
   }, [session.user?.role]);
 
   const roleLabel = useMemo(() => {
-    const role = profile?.role || session.user?.role;
+    const role = session.user?.role || profile?.role;
     if (!role) return "Guest";
     if (role === "administrator") return "Admin";
     return role.charAt(0).toUpperCase() + role.slice(1);
-  }, [profile?.role, session.user?.role]);
+  }, [session.user?.role, profile?.role]);
 
   const statusBadgeColor =
     profile?.is_active !== false ? theme.colors.success : theme.colors.danger;
@@ -215,7 +219,7 @@ export default function ProfilePage() {
   return (
     <RoleContentPage
       title="Profile"
-      subtitle="Update your details, switch theme, and control your account."
+      subtitle="View your account details, switch theme, and control your account."
       role={roleLabel}
       activeKey="profile"
       menuItems={menuItems}
@@ -360,15 +364,9 @@ export default function ProfilePage() {
           {/* Action Buttons */}
           <View style={styles.actionGrid}>
             <GradientButton
-              onPress={() => router.push("/profile-edit")}
-              variant="primary"
-              accessibilityLabel="Edit profile information"
-            >
-              Update Profile
-            </GradientButton>
-            <GradientButton
               onPress={() => router.push("/change-password")}
               variant="secondary"
+              style={styles.primaryAction}
               accessibilityLabel="Change account password"
             >
               Change Password
@@ -472,6 +470,9 @@ const styles = StyleSheet.create({
   actionGrid: {
     gap: 10,
     marginTop: 4,
+  },
+  primaryAction: {
+    alignSelf: "stretch",
   },
   helpText: {
     fontSize: 13,

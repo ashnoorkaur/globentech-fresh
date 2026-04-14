@@ -5,7 +5,10 @@ import {
 } from "@react-navigation/native";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
+import { useEffect } from "react";
 import "react-native-reanimated";
+import { ensureFirebaseLiveBridge } from "../lib/live-data";
+import { hydrateSession } from "../lib/session-store";
 import { useAppTheme } from "../lib/theme";
 
 export const unstable_settings = {
@@ -14,6 +17,11 @@ export const unstable_settings = {
 
 export default function RootLayout() {
   const theme = useAppTheme();
+
+  useEffect(() => {
+    ensureFirebaseLiveBridge();
+    void hydrateSession();
+  }, []);
 
   return (
     <ThemeProvider value={theme.isDark ? DarkTheme : DefaultTheme}>
@@ -83,7 +91,6 @@ export default function RootLayout() {
           options={{ headerShown: false }}
         />
         <Stack.Screen name="profile" options={{ headerShown: false }} />
-        <Stack.Screen name="profile-edit" options={{ headerShown: false }} />
         <Stack.Screen name="change-password" options={{ headerShown: false }} />
         <Stack.Screen name="settings" options={{ headerShown: false }} />
         <Stack.Screen

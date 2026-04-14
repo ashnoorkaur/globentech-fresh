@@ -7,11 +7,12 @@ import { MenuItem } from "../constants/role-menus";
 import { useConfirmModal } from "../hooks/use-confirm-modal";
 import { logoutSession } from "../lib/auth-api";
 import { clearChatSession } from "../lib/chatbot-session";
+import { subscribeLiveData } from "../lib/live-data";
 import {
-  clearNotifications,
-  getUnreadNotificationsCount,
-  syncNotificationsForRole,
-  useNotificationsState,
+    clearNotifications,
+    getUnreadNotificationsCount,
+    syncNotificationsForRole,
+    useNotificationsState,
 } from "../lib/notifications-store";
 import { setSessionUser, useSessionState } from "../lib/session-store";
 import { useAppTheme } from "../lib/theme";
@@ -76,11 +77,17 @@ export function RoleContentPage({
   useEffect(() => {
     const roleValue = session.user?.role;
     void syncNotificationsForRole(roleValue);
+    const unsubscribeLive = subscribeLiveData(() => {
+      void syncNotificationsForRole(roleValue);
+    });
     const timer = setInterval(() => {
       void syncNotificationsForRole(roleValue);
     }, 30000);
 
-    return () => clearInterval(timer);
+    return () => {
+      unsubscribeLive();
+      clearInterval(timer);
+    };
   }, [session.user?.role]);
 
   const onLogout = async () => {
@@ -106,7 +113,6 @@ export function RoleContentPage({
     role === "Admin" &&
     [
       "approvals",
-      "calendar",
       "order-history",
       "users",
       "equipment",

@@ -62,7 +62,7 @@ const defaultEndpoints: Required<EndpointConfig> = {
   customerCreateOrder: "/api/customer-create-order.php",
   customerMyOrders: "/api/customer-my-orders.php",
   customerOrderHistory: "/api/customer-order-history.php",
-  authLogin: "/api/auth-login.php",
+  authLogin: "/public/pages/api/login.php",
   authRegister: "/api/auth-register.php",
   authLogout: "/api/auth-logout.php",
   authSession: "/api/auth-session.php",

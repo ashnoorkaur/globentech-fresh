@@ -6,58 +6,102 @@ import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
 import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
+    hasCachedScreenState,
+    useCachedScreenState,
+} from "../hooks/use-screen-cache";
+import {
     fetchAdminUsers,
     fetchPendingOrders,
     type AdminUserDto,
     type PendingOrderDto,
 } from "../lib/admin-api";
 import { fetchCalendarData, type QueueEntry } from "../lib/calendar-api";
+import { useNotificationsState } from "../lib/notifications-store";
 import { useAppTheme } from "../lib/theme";
 
 export default function AdminDashboardPage() {
   const theme = useAppTheme();
-  const [orders, setOrders] = useState<PendingOrderDto[]>([]);
-  const [queue, setQueue] = useState<QueueEntry[]>([]);
-  const [users, setUsers] = useState<AdminUserDto[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [lastUpdated, setLastUpdated] = useState("");
+  const notifications = useNotificationsState();
+  const [orders, setOrders] = useCachedScreenState<PendingOrderDto[]>(
+    "admin-dashboard:orders",
+    [],
+  );
+  const [queue, setQueue] = useCachedScreenState<QueueEntry[]>(
+    "admin-dashboard:queue",
+    [],
+  );
+  const [users, setUsers] = useCachedScreenState<AdminUserDto[]>(
+    "admin-dashboard:users",
+    [],
+  );
+  const [equipmentCount, setEquipmentCount] = useCachedScreenState<number>(
+    "admin-dashboard:equipmentCount",
+    0,
+  );
+  const [loading, setLoading] = useState(
+    () => !hasCachedScreenState("admin-dashboard:orders"),
+  );
+  const [lastUpdated, setLastUpdated] = useCachedScreenState(
+    "admin-dashboard:lastUpdated",
+    "",
+  );
 
   const loadLiveData = useCallback(async () => {
-    setLoading(true);
+    if (orders.length === 0 && queue.length === 0 && users.length === 0) {
+      setLoading(true);
+    }
     try {
-      const [pendingOrders, adminUsers, calendarData] = await Promise.all([
+      // DON'T clear cache - we want to use pre-warmed data from login
+      // Only clear if this is a manual refresh (coming back to dashboard)
+      
+      // Load all data in parallel but allow partial success
+      const [pendingOrdersResult, adminUsersResult, calendarDataResult] = await Promise.allSettled([
         fetchPendingOrders(),
         fetchAdminUsers(),
         fetchCalendarData(),
       ]);
+
+      // Extract successful results or use empty arrays/objects as fallback
+      const pendingOrders = pendingOrdersResult.status === "fulfilled" 
+        ? pendingOrdersResult.value 
+        : [];
+      
+      const adminUsers = adminUsersResult.status === "fulfilled" 
+        ? adminUsersResult.value 
+        : [];
+      
+      const calendarData = calendarDataResult.status === "fulfilled" 
+        ? calendarDataResult.value 
+        : { queue: [], equipment: [] };
+
       setOrders(pendingOrders);
       setUsers(adminUsers);
       setQueue(calendarData.queue ?? []);
+      setEquipmentCount(calendarData.equipment?.length ?? 0);
       setLastUpdated(new Date().toLocaleTimeString());
     } catch {
-      setOrders([]);
-      setUsers([]);
-      setQueue([]);
+      // Keep the last successful snapshot visible.
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [orders.length, queue.length, setEquipmentCount, setLastUpdated, setOrders, setQueue, setUsers, users.length]);
 
   useFocusedPolling(loadLiveData, { intervalMs: 20000 });
 
   const stats = useMemo(() => {
     const total = orders.length;
     const high = orders.filter((o) => o.priority === "high").length;
-    const companies = new Set([
-      ...orders.map((o) => o.company_name || "Unknown"),
-      ...queue.map((q) => q.order_number || "Unknown"),
-    ]).size;
     const usersCount = users.length;
     const completed = queue.filter(
       (q) => (q.order_status || "").toLowerCase() === "completed",
     ).length;
-    return { total, high, companies, usersCount, completed };
-  }, [orders, users, queue]);
+    return { total, high, equipmentCount, usersCount, completed };
+  }, [equipmentCount, orders, users, queue]);
+
+  const recentNotifications = useMemo(
+    () => notifications.items.slice(0, 3),
+    [notifications.items],
+  );
 
   const cards = [
     {
@@ -68,6 +112,15 @@ export default function AdminDashboardPage() {
       route: "/admin-approvals" as const,
       button: "Review Orders",
       color: theme.colors.primary,
+    },
+    {
+      title: "Orders & Assignments",
+      description: "Manage active order detail, queue state, and technician assignment",
+      metricLabel: "Tracked",
+      metricValue: String(queue.length),
+      route: "/admin-order-history" as const,
+      button: "Open Timeline",
+      color: theme.colors.warning,
     },
     {
       title: "User Management",
@@ -81,8 +134,8 @@ export default function AdminDashboardPage() {
     {
       title: "Equipment Management",
       description: "Configure equipment settings and schedules",
-      metricLabel: "Companies",
-      metricValue: String(stats.companies),
+      metricLabel: "Equipment",
+      metricValue: String(stats.equipmentCount),
       route: "/admin-equipment" as const,
       button: "Manage Equipment",
       color: theme.colors.buttonStart,
@@ -177,6 +230,36 @@ export default function AdminDashboardPage() {
             </GradientButton>
           </View>
         ))}
+
+        <View
+          style={[
+            styles.notificationsPanel,
+            {
+              borderColor: theme.colors.border,
+              backgroundColor: theme.colors.surfaceMuted,
+            },
+          ]}
+        >
+          <View style={styles.notificationsHeader}>
+            <Text style={[styles.notificationsTitle, { color: theme.colors.text }]}>Recent Notifications</Text>
+            <Text
+              style={[styles.notificationsLink, { color: theme.colors.primary }]}
+              onPress={() => router.push("/notifications")}
+            >
+              Open All
+            </Text>
+          </View>
+          {recentNotifications.length === 0 ? (
+            <Text style={[styles.notificationsEmpty, { color: theme.colors.textMuted }]}>No recent admin notifications.</Text>
+          ) : (
+            recentNotifications.map((item) => (
+              <View key={item.id} style={styles.notificationRow}>
+                <Text style={[styles.notificationTitle, { color: theme.colors.text }]}>{item.title}</Text>
+                <Text style={[styles.notificationMessage, { color: theme.colors.textMuted }]}>{item.message}</Text>
+              </View>
+            ))
+          )}
+        </View>
       </View>
     </RoleContentPage>
   );
@@ -204,4 +287,16 @@ const styles = StyleSheet.create({
     minWidth: 140,
   },
   featureBtnText: { color: "#fff", fontWeight: "800", fontSize: 12 },
+  notificationsPanel: { borderWidth: 1, borderRadius: 14, padding: 12, gap: 8 },
+  notificationsHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  notificationsTitle: { fontSize: 15, fontWeight: "800" },
+  notificationsLink: { fontSize: 12, fontWeight: "800" },
+  notificationsEmpty: { fontSize: 12, fontWeight: "700" },
+  notificationRow: { gap: 2 },
+  notificationTitle: { fontSize: 12, fontWeight: "800" },
+  notificationMessage: { fontSize: 11, lineHeight: 17 },
 });

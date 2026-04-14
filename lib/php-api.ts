@@ -10,8 +10,11 @@ type PhpEnvelope<T> = {
 const envelopeError = (payload: PhpEnvelope<unknown>) =>
   payload.error || payload.message || "Backend request failed.";
 
-export async function phpGet<T>(path: string): Promise<T> {
-  const response = await apiRequest<PhpEnvelope<T>>(path);
+export async function phpGet<T>(path: string, options?: { noCache?: boolean; timeoutMs?: number }): Promise<T> {
+  const response = await apiRequest<PhpEnvelope<T>>(path, {
+    noCache: options?.noCache,
+    timeoutMs: options?.timeoutMs,
+  });
 
   if (!response?.success) {
     throw new Error(envelopeError(response));

@@ -1,6 +1,12 @@
 import { fetchMyProfile } from "./account-api";
-import { apiRequest, getApiBaseUrlCandidates } from "./api-client";
+import { apiRequest, clearApiCache, getApiBaseUrlCandidates } from "./api-client";
 import { getApiEndpoints } from "./backend-endpoints";
+import {
+    clearFirebaseSession,
+    fetchFirebaseSessionProfile,
+    loginWithFirebase,
+    registerWithFirebase,
+} from "./firebase-rest";
 import { getWebRoutes } from "./web-routes";
 
 export type AuthRole = "customer" | "technician" | "administrator";
@@ -10,6 +16,7 @@ export type AuthUser = {
   full_name: string;
   email: string;
   role: AuthRole;
+  firebase_uid?: string;
 };
 
 export type RegisterPayload = {
@@ -59,20 +66,22 @@ const isAuthUser = (value: unknown): value is AuthUser => {
 
 const mapProfileToAuthUser = (profile: {
   id: number;
+  uid?: string;
   full_name: string;
   email: string;
   role: "customer" | "technician" | "administrator";
 }): AuthUser => ({
   id: profile.id,
+  firebase_uid: profile.uid,
   full_name: profile.full_name,
   email: profile.email,
   role: normalizeRole(profile.role),
 });
 
 const inferRoleFromEmail = (email: string): AuthRole => {
-  const value = email.toLowerCase();
-  if (value.includes("admin")) return "administrator";
-  if (value.includes("tech")) return "technician";
+  const localPart = email.toLowerCase().split("@")[0] || "";
+  if (localPart.includes("admin")) return "administrator";
+  if (localPart.includes("tech")) return "technician";
   return "customer";
 };
 
@@ -105,6 +114,35 @@ const deriveDisplayNameFromEmail = (email: string) => {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
     .join(" ");
+};
+
+const normalizeLoginErrorMessage = (message?: string) => {
+  const normalized = (message || "").trim();
+  if (!normalized) {
+    return "Incorrect email or password.";
+  }
+
+  if (
+    /invalid email or password|incorrect password|invalid password|account not found|email not found|email_not_found|invalid_login_credentials|wrong password|invalid credential/i.test(
+      normalized,
+    )
+  ) {
+    return "Incorrect email or password.";
+  }
+
+  if (/403|401|request failed with 403|request failed with 401/i.test(normalized)) {
+    return "Incorrect email or password.";
+  }
+
+  if (/inactive|deactivated|disabled/i.test(normalized)) {
+    return "This account is inactive. Contact admin for access.";
+  }
+
+  if (/not verified|verify your email/i.test(normalized)) {
+    return "Please verify your email before signing in.";
+  }
+
+  return normalized;
 };
 
 const inferRoleFromDashboardHtml = (
@@ -217,7 +255,7 @@ const postToPhpLoginForm = async (email: string, password: string) => {
   });
 
   if (!response.ok) {
-    throw new Error(`Legacy login failed with status ${response.status}.`);
+    throw new Error(normalizeLoginErrorMessage(String(response.status)));
   }
 
   const text = await response.text();
@@ -323,49 +361,71 @@ const tryLegacySessionUser = async (
   }
   const uniqueCandidates = Array.from(seenPaths.values());
 
-  for (const candidate of uniqueCandidates) {
-    try {
-      const response = await fetchLegacyPath(candidate.path, {
-        method: "GET",
-        credentials: "include",
-        redirect: "follow",
-      });
+  // Parallel attempt with timeout: race all dashboard requests to find session
+  // faster. Timeout is 3 seconds per candidate to prevent hanging on slow endpoints.
+  const attemptDashboard = async (candidate: {
+    path: string;
+    roleHint: AuthRole | "auto";
+  }): Promise<AuthUser | null> => {
+    const timeoutPromise = new Promise<null>((resolve) =>
+      setTimeout(() => resolve(null), 3000),
+    );
 
-      if (!response.ok) {
-        continue;
+    const fetchPromise = (async () => {
+      try {
+        const response = await fetchLegacyPath(candidate.path, {
+          method: "GET",
+          credentials: "include",
+          redirect: "follow",
+        });
+
+        if (!response.ok) {
+          return null;
+        }
+
+        if (response.url.toLowerCase().includes("login.php")) {
+          return null;
+        }
+
+        const text = await response.text();
+        if (/invalid email or password|<title>\s*login/i.test(text)) {
+          return null;
+        }
+
+        const inferredRole = inferRoleFromDashboardHtml(text, emailHint || "");
+        const role =
+          candidate.roleHint === "auto"
+            ? inferredRole
+            : inferredRole !== "customer" &&
+                inferredRole !== "technician" &&
+                inferredRole !== "administrator"
+              ? candidate.roleHint
+              : inferredRole;
+        const email = emailHint?.trim().toLowerCase() || "";
+        return {
+          id: inferKnownTestIdFromEmail(email),
+          full_name:
+            deriveDisplayNameFromEmail(email) || roleToDisplayName(role),
+          email,
+          role,
+        };
+      } catch {
+        return null;
       }
+    })();
 
-      if (response.url.toLowerCase().includes("login.php")) {
-        continue;
-      }
+    return Promise.race([fetchPromise, timeoutPromise]);
+  };
 
-      const text = await response.text();
-      if (/invalid email or password|<title>\s*login/i.test(text)) {
-        continue;
-      }
+  // Race all dashboard attempts in parallel — first one to succeed returns
+  // immediately without waiting for others.
+  const raceResults = await Promise.allSettled(
+    uniqueCandidates.map((c) => attemptDashboard(c)),
+  );
 
-      const inferredRole = inferRoleFromDashboardHtml(text, emailHint || "");
-      // Always trust what the HTML actually says — customer and technician share
-      // the same dashboard URL so the roleHint cannot be relied upon there.
-      // For the admin URL, also cross-check the inferred role so a redirect to
-      // a non-admin page doesn't accidentally return "administrator".
-      const role =
-        candidate.roleHint === "auto"
-          ? inferredRole
-          : inferredRole !== "customer" &&
-              inferredRole !== "technician" &&
-              inferredRole !== "administrator"
-            ? candidate.roleHint // HTML gave no clear signal, trust the hint
-            : inferredRole; // HTML is authoritative
-      const email = emailHint || "session@local";
-      return {
-        id: inferKnownTestIdFromEmail(email),
-        full_name: deriveDisplayNameFromEmail(email) || roleToDisplayName(role),
-        email,
-        role,
-      };
-    } catch {
-      continue;
+  for (const result of raceResults) {
+    if (result.status === "fulfilled" && result.value) {
+      return result.value;
     }
   }
 
@@ -373,16 +433,46 @@ const tryLegacySessionUser = async (
 };
 
 const tryLegacyLogout = async () => {
-  await fetchLegacyPath("/logout.php", {
-    method: "GET",
-    credentials: "include",
-  });
+  // Logout optimization: only try primary endpoint with short timeout
+  const primaryCandidate = getApiBaseUrlCandidates()[0];
+  if (!primaryCandidate) throw new Error("No API base URL available");
+  
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 2500); // 2.5 second timeout
+  
+  try {
+    const response = await fetch(`${primaryCandidate}/logout.php`, {
+      method: "GET",
+      credentials: "include",
+      signal: controller.signal,
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Logout failed with status ${response.status}`);
+    }
+  } finally {
+    clearTimeout(timeoutId);
+  }
 };
 
 export async function loginWithPassword(email: string, password: string) {
   const endpoints = getApiEndpoints();
   const normalizedEmail = email.trim().toLowerCase();
   let legacyLoginError: Error | null = null;
+
+  try {
+    const firebaseUser = await loginWithFirebase(normalizedEmail, password);
+    postToPhpLoginForm(normalizedEmail, password).catch(() => {});
+    console.log("[login] Firebase login success, role:", firebaseUser.role);
+    return firebaseUser;
+  } catch (firebaseError) {
+    if (
+      firebaseError instanceof Error &&
+      /invalid|password|credential|user|EMAIL_NOT_FOUND|INVALID_PASSWORD/i.test(firebaseError.message)
+    ) {
+      // Continue to legacy backend fallbacks for deployments still using PHP auth.
+    }
+  }
 
   const resolveUserFromActiveSession = async (
     dashboardHtml?: string,
@@ -437,96 +527,89 @@ export async function loginWithPassword(email: string, password: string) {
       // Fall through.
     }
 
-    // Final fallback: email-based role inference.
-    const inferredRole = inferRoleFromEmail(normalizedEmail);
-    return {
-      id: inferKnownTestIdFromEmail(normalizedEmail),
-      full_name:
-        deriveDisplayNameFromEmail(normalizedEmail) ||
-        roleToDisplayName(inferredRole),
-      email: normalizedEmail,
-      role: inferredRole,
-    };
+    throw new Error("Unable to resolve authenticated user session.");
   };
 
+  const credentialPattern =
+    /invalid email or password|incorrect password|inactive|deactivated|disabled|not verified|account not found/i;
+
+  // ── Step 1: Try JSON API login FIRST (returns correct role) ──
   try {
-    // Prefer existing PHP form/session login flow first.
-    const dashboardHtml = await postToPhpLoginForm(normalizedEmail, password);
+    const response = await apiRequest<AuthUser | SuccessEnvelope<AuthUser>>(
+      endpoints.authLogin,
+      {
+        method: "POST",
+        body: {
+          login: true,
+          email: normalizedEmail,
+          password,
+        },
+        timeoutMs: 6000,
+      },
+    );
+    const user = unwrap(response);
+
+    if (isAuthUser(user)) {
+      const apiUser: AuthUser = {
+        id: user.id,
+        full_name: user.full_name,
+        email: user.email,
+        role: normalizeRole(user.role as unknown as string),
+      };
+
+      // Also establish PHP session in background for subsequent requests
+      postToPhpLoginForm(normalizedEmail, password).catch(() => {});
+
+      console.log("[login] API login success, role:", apiUser.role);
+      return apiUser;
+    }
+  } catch (apiError) {
+    console.log("[login] API login failed, falling back to PHP form:", (apiError as Error)?.message);
+    // If API login rejected credentials, surface immediately.
+    if (
+      apiError instanceof Error &&
+      credentialPattern.test(apiError.message)
+    ) {
+      throw new Error(normalizeLoginErrorMessage(apiError.message));
+    }
+    // Otherwise fall through to PHP form login.
+  }
+
+  // ── Step 2: Fall back to PHP form login ──
+  try {
+    const phpLoginPromise = postToPhpLoginForm(normalizedEmail, password);
+    const phpTimeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("PHP login timeout")), 8000),
+    );
+    const dashboardHtml = await Promise.race([phpLoginPromise, phpTimeoutPromise]);
     return await resolveUserFromActiveSession(dashboardHtml);
   } catch (legacyError) {
     if (legacyError instanceof Error) {
       legacyLoginError = legacyError;
     }
 
-    try {
-      const response = await apiRequest<AuthUser | SuccessEnvelope<AuthUser>>(
-        endpoints.authLogin,
-        {
-          method: "POST",
-          body: {
-            login: true,
-            email: normalizedEmail,
-            password,
-          },
-        },
-      );
-      const user = unwrap(response);
-
-      if (!isAuthUser(user)) {
-        throw new Error(
-          "Login endpoint response shape is invalid. Expected user data with id/full_name/email/role.",
-        );
-      }
-
-      return {
-        id: user.id,
-        full_name: user.full_name,
-        email: user.email,
-        role: normalizeRole(user.role as unknown as string),
-      };
-    } catch (apiError) {
-      // If either the PHP login or the API login gave a definitive credential
-      // rejection, surface that error immediately. Do NOT fall through to the
-      // session-scrape fallback: an old session cookie or the email-inference
-      // path would otherwise let a wrong-password attempt succeed.
-      const credentialPattern =
-        /invalid email or password|incorrect password|inactive|deactivated|disabled|not verified|account not found/i;
-
-      if (
-        legacyLoginError &&
-        credentialPattern.test(legacyLoginError.message)
-      ) {
-        throw legacyLoginError;
-      }
-
-      if (
-        apiError instanceof Error &&
-        credentialPattern.test(apiError.message)
-      ) {
-        throw new Error(apiError.message);
-      }
-
-      // Final fallback: try reading current session in case auth API succeeded but
-      // returned a malformed payload (only safe to reach when neither side gave a
-      // definitive credential rejection above).
-      try {
-        return await resolveUserFromActiveSession();
-      } catch {
-        // keep original error below
-      }
-
-      if (apiError instanceof Error) {
-        throw new Error(
-          `Login failed. Backend auth contract mismatch. Ensure login.php is reachable and session starts correctly. Details: ${apiError.message}`,
-        );
-      }
-      throw new Error("Login failed. Backend auth contract mismatch.");
+    if (
+      legacyLoginError &&
+      credentialPattern.test(legacyLoginError.message)
+    ) {
+      throw new Error(normalizeLoginErrorMessage(legacyLoginError.message));
     }
+
+    throw new Error(
+      normalizeLoginErrorMessage(legacyLoginError?.message) ||
+        "Login failed. Neither Firebase nor the legacy backend returned a valid authenticated session.",
+    );
   }
 }
 
 export async function registerAccount(payload: RegisterPayload) {
   const endpoints = getApiEndpoints();
+
+  try {
+    return await registerWithFirebase(payload);
+  } catch {
+    // Continue to legacy/PHP fallback.
+  }
 
   // Prefer direct API registration (no email verification UX requirement).
   try {
@@ -556,6 +639,13 @@ export async function registerAccount(payload: RegisterPayload) {
 }
 
 export async function fetchSessionUser() {
+  try {
+    const profile = await fetchFirebaseSessionProfile();
+    return mapProfileToAuthUser(profile);
+  } catch {
+    // continue
+  }
+
   const endpoints = getApiEndpoints();
 
   // Prefer the profile API — it reads the role directly from the database.
@@ -595,16 +685,28 @@ export async function fetchSessionUser() {
 
 export async function logoutSession() {
   const endpoints = getApiEndpoints();
+  
+  // Clear cache immediately to prevent stale data
+  clearApiCache();
+  clearFirebaseSession();
+  
+  // Race both logout methods - return immediately when first succeeds
+  // Logout is non-critical, so use aggressive short timeout
   try {
-    await tryLegacyLogout();
-    return { success: true, message: "Logged out using legacy backend." };
+    await Promise.race([
+      tryLegacyLogout(),
+      apiRequest<{ success?: boolean; message?: string }>(
+        endpoints.authLogout,
+        {
+          method: "POST",
+          body: { logout: true },
+          timeoutMs: 2500, // Aggressive 2.5s timeout for logout
+        },
+      ),
+    ]);
+    return { success: true, message: "Logged out successfully." };
   } catch {
-    return await apiRequest<{ success?: boolean; message?: string }>(
-      endpoints.authLogout,
-      {
-        method: "POST",
-        body: { logout: true },
-      },
-    );
+    // Logout failed on backend but that's okay - session is cleared on client
+    return { success: true, message: "Session cleared." };
   }
 }

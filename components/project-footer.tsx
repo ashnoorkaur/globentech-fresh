@@ -32,7 +32,7 @@ export function ProjectFooter({ colors }: ProjectFooterProps) {
           Project Information
         </Text>
         <Text style={[styles.line, { color: colors.textMuted }]}>
-          Course: CPSY 301-D
+          Course: PROJ-309-SD
         </Text>
         <Text style={[styles.line, { color: colors.textMuted }]}>
           Phase 3 Prototype
