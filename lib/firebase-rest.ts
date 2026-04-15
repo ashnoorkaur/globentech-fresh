@@ -132,6 +132,21 @@ const normalizeOrderStatus = (value?: string) => {
   return normalized;
 };
 
+const toStringArray = (value: unknown): string[] => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "string" ? item.trim() : ""))
+      .filter(Boolean);
+  }
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+};
+
 const buildOrderNumber = () => `ORD-${String(Date.now()).slice(-6)}`;
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -285,37 +300,48 @@ const mapOrderToAdminHistory = (
 const mapOrderToQueueEntry = (
   firebaseKey: string,
   order: FirebaseOrderRecord,
-): QueueEntry => ({
-  queue_id: order.id || hashTextToId(`queue:${firebaseKey}`),
-  firebase_key: firebaseKey,
-  order_id: order.id || hashTextToId(firebaseKey),
-  order_number: order.orderNumber || `ORD-${firebaseKey.slice(-6).toUpperCase()}`,
-  order_status: normalizeOrderStatus(order.status),
-  priority: normalizePriority(order.priority),
-  customer_name: order.customerName,
-  company_name: order.companyName,
-  sample_type: order.sampleType,
-  compound_name: order.compoundName,
-  quantity: parseNumeric(order.quantity),
-  unit: parseUnit(order.quantity, order.unit) as QueueEntry["unit"],
-  notes: order.notes,
-  assigned_at: order.assignedAt,
-  assigned_technician_uid: order.assignedTechnicianUid,
-  assigned_technician_name: order.assignedTechnicianName,
-  assigned_technician_email: order.assignedTechnicianEmail,
-  technician_status_action: order.technicianStatusAction,
-  technician_status_note: order.technicianStatusNote,
-  technician_status_updated_at: order.technicianStatusUpdatedAt,
-  technician_status_updated_by: order.technicianStatusUpdatedBy,
-  sample_types: order.sampleType ? [order.sampleType] : [],
-  equipment_id: typeof order.equipmentId === "string" ? Number(order.equipmentId) || null : order.equipmentId ?? null,
-  equipment_name: order.equipmentName || null,
-  scheduled_start: order.scheduledStart || null,
-  scheduled_end: order.scheduledEnd || null,
-  estimated_completion: order.estimatedCompletion || null,
-  position: order.id || hashTextToId(firebaseKey),
-  queue_type: normalizeOrderStatus(order.status),
-});
+  users: Record<string, FirebaseUserRecord>,
+): QueueEntry => {
+  const customer = order.customerId ? users[order.customerId] : undefined;
+  const sampleTypes = toStringArray((order as FirebaseOrderRecord & { sampleTypes?: unknown }).sampleTypes);
+  if (sampleTypes.length === 0 && order.sampleType?.trim()) {
+    sampleTypes.push(order.sampleType.trim());
+  }
+
+  return {
+    queue_id: order.id || hashTextToId(`queue:${firebaseKey}`),
+    firebase_key: firebaseKey,
+    order_id: order.id || hashTextToId(firebaseKey),
+    order_number: order.orderNumber || `ORD-${firebaseKey.slice(-6).toUpperCase()}`,
+    order_status: normalizeOrderStatus(order.status),
+    priority: normalizePriority(order.priority),
+    customer_name:
+      order.customerName || customer?.name || customer?.full_name || undefined,
+    company_name:
+      order.companyName || customer?.company || customer?.companyName || undefined,
+    sample_type: order.sampleType || sampleTypes[0] || undefined,
+    compound_name: order.compoundName,
+    quantity: parseNumeric(order.quantity),
+    unit: parseUnit(order.quantity, order.unit) as QueueEntry["unit"],
+    notes: order.notes,
+    assigned_at: order.assignedAt,
+    assigned_technician_uid: order.assignedTechnicianUid,
+    assigned_technician_name: order.assignedTechnicianName,
+    assigned_technician_email: order.assignedTechnicianEmail,
+    technician_status_action: order.technicianStatusAction,
+    technician_status_note: order.technicianStatusNote,
+    technician_status_updated_at: order.technicianStatusUpdatedAt,
+    technician_status_updated_by: order.technicianStatusUpdatedBy,
+    sample_types: sampleTypes,
+    equipment_id: typeof order.equipmentId === "string" ? Number(order.equipmentId) || null : order.equipmentId ?? null,
+    equipment_name: order.equipmentName || null,
+    scheduled_start: order.scheduledStart || null,
+    scheduled_end: order.scheduledEnd || null,
+    estimated_completion: order.estimatedCompletion || null,
+    position: order.id || hashTextToId(firebaseKey),
+    queue_type: normalizeOrderStatus(order.status),
+  };
+};
 
 const mapEquipmentRecord = (
   firebaseKey: string,
@@ -627,6 +653,7 @@ export async function updateFirebaseOrderStatus(match: { firebase_key?: string; 
 }
 
 export async function fetchFirebaseCalendarData() {
+  const users = await readUsersMap();
   const orders = await readOrdersMap();
   const equipmentMap = await readEquipmentMap();
   const queue = Object.entries(orders)
@@ -634,7 +661,7 @@ export async function fetchFirebaseCalendarData() {
       const status = normalizeOrderStatus(order.status);
       return status === "approved" || status === "processing" || status === "completed";
     })
-    .map(([key, order]) => mapOrderToQueueEntry(key, order))
+    .map(([key, order]) => mapOrderToQueueEntry(key, order, users))
     .sort((a, b) => (a.scheduled_start || a.estimated_completion || "").localeCompare(b.scheduled_start || b.estimated_completion || ""));
 
   const equipment = Object.entries(equipmentMap)

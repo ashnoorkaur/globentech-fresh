@@ -10,13 +10,50 @@ import {
 } from "../hooks/use-screen-cache";
 import { fetchTechnicianWorkQueue, type QueueEntry } from "../lib/calendar-api";
 import { useNotificationsState } from "../lib/notifications-store";
+import { normalizeOrderStatusForCompare } from "../lib/order-status-normalize";
 import { useAppTheme } from "../lib/theme";
 
 const formatDateTime = (value?: string | null) => {
-  if (!value) return "N/A";
+  if (!value) return "Pending sync";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleString();
+};
+
+const formatText = (value?: string | null, fallback = "Pending sync") => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+};
+
+const formatSampleSummary = (entry: QueueEntry) => {
+  const sample = entry.sample_type?.trim();
+  const samples = entry.sample_types.filter(Boolean);
+  if (sample) return sample;
+  if (samples.length > 0) return samples.join(", ");
+  return "Sample details pending sync";
+};
+
+const formatCustomerCompany = (entry: QueueEntry) => {
+  const customer = entry.customer_name?.trim();
+  const company = entry.company_name?.trim();
+  if (customer && company) return `Customer: ${customer} | Company: ${company}`;
+  if (customer) return `Customer: ${customer}`;
+  if (company) return `Company: ${company}`;
+  return "Customer details pending sync";
+};
+
+const formatSampleCompound = (entry: QueueEntry) => {
+  const sample = formatSampleSummary(entry);
+  const compound = entry.compound_name?.trim();
+  return compound ? `Sample: ${sample} | Compound: ${compound}` : `Sample: ${sample}`;
+};
+
+const formatQuantityEquipment = (entry: QueueEntry) => {
+  const quantity =
+    entry.quantity !== undefined && entry.quantity !== null
+      ? `Quantity: ${entry.quantity} ${entry.unit || ""}`.trim()
+      : "Quantity pending sync";
+  return `${quantity} | Equipment: ${formatText(entry.equipment_name, "Pending assignment")}`;
 };
 
 export default function TechnicianDashboardPage() {
@@ -53,14 +90,13 @@ export default function TechnicianDashboardPage() {
 
   const taskStats = useMemo(() => {
     const processingQueue = queue.filter((q) => {
-      const status = (q.order_status || "").toLowerCase();
-      return !(status.includes("complete") || status.includes("result"));
+      return normalizeOrderStatusForCompare(q.order_status) !== "completed";
     }).length;
 
     const completedToday = queue.filter((q) => {
-      const status = (q.order_status || "").toLowerCase();
-      if (!(status.includes("complete") || status.includes("result")))
+      if (normalizeOrderStatusForCompare(q.order_status) !== "completed") {
         return false;
+      }
       const dateValue = q.estimated_completion || q.scheduled_end;
       if (!dateValue) return false;
       const d = new Date(dateValue);
@@ -188,9 +224,9 @@ export default function TechnicianDashboardPage() {
               >
                 <Text style={[styles.queueTitle, { color: theme.colors.text }]}>{entry.order_number}</Text>
                 <Text style={[styles.queueSub, { color: theme.colors.textMuted }]}>Status: {entry.order_status} | Priority: {(entry.priority || "standard").toUpperCase()}</Text>
-                <Text style={[styles.queueSub, { color: theme.colors.textMuted }]}>Customer: {entry.customer_name || "N/A"} | Company: {entry.company_name || "N/A"}</Text>
-                <Text style={[styles.queueSub, { color: theme.colors.textMuted }]}>Sample: {entry.sample_type || "N/A"} | Compound: {entry.compound_name || "N/A"}</Text>
-                <Text style={[styles.queueSub, { color: theme.colors.textMuted }]}>Quantity: {entry.quantity ?? "N/A"} {entry.unit || ""} | Equipment: {entry.equipment_name || "Unassigned"}</Text>
+                <Text style={[styles.queueSub, { color: theme.colors.textMuted }]}>{formatCustomerCompany(entry)}</Text>
+                <Text style={[styles.queueSub, { color: theme.colors.textMuted }]}>{formatSampleCompound(entry)}</Text>
+                <Text style={[styles.queueSub, { color: theme.colors.textMuted }]}>{formatQuantityEquipment(entry)}</Text>
                 <Text style={[styles.queueSub, { color: theme.colors.textMuted }]}>Assigned Technician: {entry.assigned_technician_name || "Open technician pool"}</Text>
                 <Text style={[styles.queueSub, { color: theme.colors.textMuted }]}>Start: {formatDateTime(entry.scheduled_start)} | ETA: {formatDateTime(entry.estimated_completion || entry.scheduled_end)}</Text>
                 {entry.notes ? (

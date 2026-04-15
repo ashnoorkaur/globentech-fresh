@@ -55,7 +55,7 @@ const stageMeaning = (stage: NormalizedStage) => {
   if (stage === "submitted") return "Waiting for admin review.";
   if (stage === "approved") return "Approved and ready for technician assignment.";
   if (stage === "processing") return "Technician is handling the order.";
-  if (stage === "completed") return "Finished and results are available.";
+  if (stage === "completed") return "Technician finished the order and the workflow is complete.";
   return "Order was rejected.";
 };
 
@@ -521,14 +521,15 @@ export default function AdminOrderHistoryPage() {
               Processing: technician is working on it
             </Text>
             <Text style={[styles.guideLine, { color: theme.colors.textMuted }]}> 
-              Completed: results are ready
+              Completed: technician finished the work and no more assignment changes are needed
             </Text>
           </View>
 
           {filtered.slice(0, 20).map((row) => {
             const stage = normalizeStage(row.status);
             const step = stageStep(stage);
-            const canAssignTechnician = stage !== "rejected";
+            const canAssignTechnician =
+              stage !== "rejected" && stage !== "completed";
             const canAssignEquipment =
               stage !== "rejected" && stage !== "completed";
             const labels = ["Submitted", "Approved", "Processing", "Completed"] as const;
@@ -726,7 +727,11 @@ export default function AdminOrderHistoryPage() {
         </View>
       </View>
       <Modal
-        visible={Boolean(assignTarget && normalizeStage(assignTarget.status) !== "rejected")}
+        visible={Boolean(
+          assignTarget &&
+            normalizeStage(assignTarget.status) !== "rejected" &&
+            normalizeStage(assignTarget.status) !== "completed",
+        )}
         transparent
         animationType="fade"
         onRequestClose={() => setAssignTarget(null)}

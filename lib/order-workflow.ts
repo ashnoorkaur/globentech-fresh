@@ -40,6 +40,7 @@ const aliases: Record<string, OrderLifecycleStatus> = {
   queued: "in_queue",
   in_queue: "in_queue",
   queue: "in_queue",
+  processing: "testing",
   testing: "testing",
   preparation: "preparation",
   in_progress: "testing",

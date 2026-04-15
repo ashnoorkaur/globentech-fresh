@@ -9,6 +9,7 @@ import {
     useCachedScreenState,
 } from "../hooks/use-screen-cache";
 import { useNotificationsState } from "../lib/notifications-store";
+import { normalizeOrderStatusForCompare } from "../lib/order-status-normalize";
 import {
     fetchCustomerMyOrders,
     type CustomerOrderRow,
@@ -62,13 +63,11 @@ export default function CustomerDashboardPage() {
   const stats = useMemo(() => {
     const total = orders.length;
     const inProgress = orders.filter((o) => {
-      const status = (o.status || "").toLowerCase();
-      return (
-        status === "pending" || status === "approved" || status === "processing"
-      );
+      const status = normalizeOrderStatusForCompare(o.status);
+      return status !== "completed" && status !== "rejected";
     }).length;
     const completed = orders.filter(
-      (o) => (o.status || "").toLowerCase() === "completed",
+      (o) => normalizeOrderStatusForCompare(o.status) === "completed",
     ).length;
     return { total, inProgress, completed };
   }, [orders]);

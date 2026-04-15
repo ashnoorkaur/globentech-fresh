@@ -16,20 +16,54 @@ import {
     type EquipmentRow,
     type QueueEntry,
 } from "../lib/calendar-api";
+import { normalizeOrderStatusForCompare } from "../lib/order-status-normalize";
 import { toLifecycleStatus } from "../lib/order-workflow";
 import { useAppTheme } from "../lib/theme";
 
 type StatusFilter = "all" | "pending" | "processing" | "completed";
 
 const MIN_PROCESSING_WINDOW_MS = 20 * 60 * 1000;
-const localProcessingLockUntilByOrderId = new Map<number, number>();
 
 const normalizeStatus = (value?: string): Exclude<StatusFilter, "all"> => {
-  const s = (value || "").toLowerCase();
-  if (s.includes("complete") || s.includes("result")) return "completed";
-  if (s.includes("pending") || s.includes("queue") || s.includes("submitted"))
-    return "pending";
+  const normalized = normalizeOrderStatusForCompare(value);
+  if (normalized === "completed") return "completed";
+  if (normalized === "pending" || normalized === "approved") return "pending";
   return "processing";
+};
+
+const formatText = (value?: string | null, fallback = "Pending sync") => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+};
+
+const formatSampleSummary = (entry: QueueEntry) => {
+  const sample = entry.sample_type?.trim();
+  const samples = entry.sample_types.filter(Boolean);
+  if (sample) return sample;
+  if (samples.length > 0) return samples.join(", ");
+  return "Sample details pending sync";
+};
+
+const formatCustomerCompany = (entry: QueueEntry) => {
+  const customer = entry.customer_name?.trim();
+  const company = entry.company_name?.trim();
+  if (customer && company) return `Customer: ${customer} | Company: ${company}`;
+  if (customer) return `Customer: ${customer}`;
+  if (company) return `Company: ${company}`;
+  return "Customer details pending sync";
+};
+
+const formatSampleCompound = (entry: QueueEntry) => {
+  const sample = formatSampleSummary(entry);
+  const compound = entry.compound_name?.trim();
+  return compound ? `Sample: ${sample} | Compound: ${compound}` : `Sample: ${sample}`;
+};
+
+const formatQuantity = (entry: QueueEntry) => {
+  if (entry.quantity !== undefined && entry.quantity !== null) {
+    return `Quantity: ${entry.quantity} ${entry.unit || ""}`.trim();
+  }
+  return "Quantity pending sync";
 };
 
 const technicianOrderSummary = (value?: string) => {
@@ -60,20 +94,12 @@ const getProcessingWindowEnd = (
   const scheduledStart = toValidDate(entry.scheduled_start);
   const estimatedCompletion =
     toValidDate(entry.estimated_completion) ?? toValidDate(entry.scheduled_end);
-  const localLockUntil = localProcessingLockUntilByOrderId.get(entry.order_id);
-  const localLockEnd =
-    typeof localLockUntil === "number" ? new Date(localLockUntil) : null;
 
-  if (
-    !scheduledStart &&
-    !estimatedCompletion &&
-    !processingStartedAt &&
-    !localLockEnd
-  ) {
+  if (!scheduledStart && !estimatedCompletion && !processingStartedAt) {
     return null;
   }
 
-  const candidates = [estimatedCompletion, localLockEnd].filter(
+  const candidates = [estimatedCompletion].filter(
     (value): value is Date => Boolean(value),
   );
   const baseStart = processingStartedAt ?? scheduledStart;
@@ -89,17 +115,6 @@ const getProcessingWindowEnd = (
   return candidates.reduce((latest, current) =>
     current.getTime() > latest.getTime() ? current : latest,
   );
-};
-
-const isProcessingWindowActive = (entry: QueueEntry) => {
-  const lifecycle = toLifecycleStatus(entry.order_status);
-  if (!(lifecycle === "testing" || lifecycle === "preparation")) {
-    return false;
-  }
-
-  const windowEnd = getProcessingWindowEnd(entry);
-  if (!windowEnd) return false;
-  return windowEnd.getTime() > Date.now();
 };
 
 export default function TechnicianCalendarPage() {
@@ -143,14 +158,10 @@ export default function TechnicianCalendarPage() {
     let completed = 0;
 
     entries.forEach((item) => {
-      const status = (item.order_status || "").toLowerCase();
-      if (status.includes("complete") || status.includes("result")) {
+      const status = normalizeOrderStatusForCompare(item.order_status);
+      if (status === "completed") {
         completed += 1;
-      } else if (
-        status.includes("pending") ||
-        status.includes("queue") ||
-        status.includes("submitted")
-      ) {
+      } else if (status === "pending" || status === "approved") {
         pending += 1;
       } else {
         inProgress += 1;
@@ -177,15 +188,6 @@ export default function TechnicianCalendarPage() {
   }, [entries, statusFilter]);
 
   const markChecked = async (entry: QueueEntry) => {
-    const processingWindowEnd = getProcessingWindowEnd(entry);
-    if (isProcessingWindowActive(entry) && processingWindowEnd) {
-      feedback.showInfo(
-        "Processing Still Running",
-        `${entry.order_number} should remain in processing until ${processingWindowEnd.toLocaleTimeString()}. Complete it after that time.`,
-      );
-      return;
-    }
-
     setBusyQueueId(entry.queue_id);
     try {
       await completeQueueOrder({
@@ -193,7 +195,6 @@ export default function TechnicianCalendarPage() {
         orderNumber: entry.order_number,
         queueId: entry.queue_id,
       });
-      localProcessingLockUntilByOrderId.delete(entry.order_id);
       await loadCalendar();
       feedback.showSuccess(
         "Queue Updated",
@@ -260,13 +261,6 @@ export default function TechnicianCalendarPage() {
         processingStartedAt,
       );
 
-      if (processingWindowEnd) {
-        localProcessingLockUntilByOrderId.set(
-          entry.order_id,
-          processingWindowEnd.getTime(),
-        );
-      }
-
       await startQueueProcessing(
         entry.order_id,
         entry.queue_id,
@@ -280,7 +274,7 @@ export default function TechnicianCalendarPage() {
       await loadCalendar();
       feedback.showSuccess(
         "Processing Started",
-        `${entry.order_number} moved to processing and will stay active for at least 20 minutes before completion is allowed.`,
+        `${entry.order_number} moved to processing and can be marked done whenever the technician finishes the work.`,
       );
     } catch (error) {
       feedback.showError(
@@ -553,26 +547,22 @@ export default function TechnicianCalendarPage() {
               >
                 {(() => {
                   const lifecycle = toLifecycleStatus(entry.order_status);
-                  const rawStatus = (entry.order_status || "").toLowerCase();
-                  const processingWindowActive =
-                    isProcessingWindowActive(entry);
-                  const processingWindowEnd = getProcessingWindowEnd(entry);
+                  const normalizedStatus = normalizeOrderStatusForCompare(
+                    entry.order_status,
+                  );
                   const canStartProcessing =
                     lifecycle === "approved" ||
                     lifecycle === "in_queue" ||
                     lifecycle === "submitted";
                   const alreadyProcessing =
-                    lifecycle === "testing" || lifecycle === "preparation";
+                    lifecycle === "testing" ||
+                    lifecycle === "preparation" ||
+                    normalizedStatus === "processing";
                   const alreadyCompleted =
                     lifecycle === "results_available" ||
                     lifecycle === "completed" ||
-                    rawStatus.includes("result") ||
-                    rawStatus.includes("complete") ||
-                    rawStatus.includes("done");
-                  const canMarkChecked =
-                    !alreadyCompleted &&
-                    alreadyProcessing &&
-                    !processingWindowActive;
+                    normalizedStatus === "completed";
+                  const canMarkChecked = !alreadyCompleted && alreadyProcessing;
                   const canAssignEquipment = !alreadyCompleted;
 
                   return (
@@ -601,30 +591,27 @@ export default function TechnicianCalendarPage() {
                       <Text
                         style={[styles.sub, { color: theme.colors.textMuted }]}
                       >
-                        Customer: {entry.customer_name || "N/A"} | Company: {entry.company_name || "N/A"}
+                        {formatCustomerCompany(entry)}
                       </Text>
                       <Text
                         style={[styles.sub, { color: theme.colors.textMuted }]}
                       >
-                        Sample: {entry.sample_type || "N/A"} | Compound: {entry.compound_name || "N/A"}
+                        {formatSampleCompound(entry)}
                       </Text>
                       <Text
                         style={[styles.sub, { color: theme.colors.textMuted }]}
                       >
-                        Quantity: {entry.quantity ?? "N/A"} {entry.unit || ""}
+                        {formatQuantity(entry)}
                       </Text>
                       <Text
                         style={[styles.sub, { color: theme.colors.textMuted }]}
                       >
-                        Equipment: {entry.equipment_name || "Unassigned"}
+                        Equipment: {formatText(entry.equipment_name, "Pending assignment")}
                       </Text>
                       <Text
                         style={[styles.sub, { color: theme.colors.textMuted }]}
                       >
-                        Sample Types:{" "}
-                        {entry.sample_types?.length
-                          ? entry.sample_types.join(", ")
-                          : "N/A"}
+                        Sample Types: {formatText(entry.sample_types?.join(", "), "Pending sync")}
                       </Text>
                       <Text
                         style={[styles.sub, { color: theme.colors.textMuted }]}
@@ -660,14 +647,6 @@ export default function TechnicianCalendarPage() {
                           {entry.technician_status_updated_by
                             ? ` by ${entry.technician_status_updated_by}`
                             : ""}
-                        </Text>
-                      ) : null}
-                      {processingWindowActive && processingWindowEnd ? (
-                        <Text
-                          style={[styles.sub, { color: theme.colors.warning }]}
-                        >
-                          Processing window active until{" "}
-                          {processingWindowEnd.toLocaleTimeString()}.
                         </Text>
                       ) : null}
                       {entry.queue_id < 0 ? (
@@ -734,21 +713,19 @@ export default function TechnicianCalendarPage() {
                           }
                           onPress={() =>
                             confirm.openConfirm({
-                              title: "Mark As Checked",
-                              message: `Mark ${entry.order_number} as checked/completed?`,
-                              confirmText: "Mark Checked",
+                              title: "Mark As Done",
+                              message: `Mark ${entry.order_number} as done and completed?`,
+                              confirmText: "Mark Done",
                               onConfirm: () => markChecked(entry),
                             })
                           }
                         >
                           <Text style={styles.actionBtnText}>
                             {alreadyCompleted
-                              ? "Completed"
-                              : processingWindowActive
-                                ? "Processing"
-                                : canMarkChecked
-                                  ? "Check"
-                                  : "Start First"}
+                              ? "Done"
+                              : canMarkChecked
+                                ? "Mark Done"
+                                : "Start First"}
                           </Text>
                         </Pressable>
                         <Pressable

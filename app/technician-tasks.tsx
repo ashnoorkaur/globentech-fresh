@@ -9,6 +9,7 @@ import {
     useCachedScreenState,
 } from "../hooks/use-screen-cache";
 import { fetchTechnicianWorkQueue, type QueueEntry } from "../lib/calendar-api";
+import { normalizeOrderStatusForCompare } from "../lib/order-status-normalize";
 import { statusLabel, toLifecycleStatus } from "../lib/order-workflow";
 import { useAppTheme } from "../lib/theme";
 
@@ -16,17 +17,52 @@ type StatusFilter = "all" | "pending" | "approved" | "processing" | "completed";
 type PriorityFilter = "all" | "standard" | "high";
 
 const normalizeStatus = (value?: string): Exclude<StatusFilter, "all"> => {
-  const lifecycle = toLifecycleStatus(value);
-  if (lifecycle === "completed" || lifecycle === "results_available") {
+  const normalized = normalizeOrderStatusForCompare(value);
+  if (normalized === "completed") {
     return "completed";
   }
-  if (lifecycle === "testing" || lifecycle === "preparation") {
+  if (normalized === "processing") {
     return "processing";
   }
-  if (lifecycle === "approved" || lifecycle === "in_queue") {
+  if (normalized === "approved") {
     return "approved";
   }
   return "pending";
+};
+
+const formatText = (value?: string | null, fallback = "Pending sync") => {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : fallback;
+};
+
+const formatSampleSummary = (entry: QueueEntry) => {
+  const sample = entry.sample_type?.trim();
+  const samples = entry.sample_types.filter(Boolean);
+  if (sample) return sample;
+  if (samples.length > 0) return samples.join(", ");
+  return "Sample details pending sync";
+};
+
+const formatCustomerCompany = (entry: QueueEntry) => {
+  const customer = entry.customer_name?.trim();
+  const company = entry.company_name?.trim();
+  if (customer && company) return `Customer: ${customer} | Company: ${company}`;
+  if (customer) return `Customer: ${customer}`;
+  if (company) return `Company: ${company}`;
+  return "Customer details pending sync";
+};
+
+const formatSampleCompound = (entry: QueueEntry) => {
+  const sample = formatSampleSummary(entry);
+  const compound = entry.compound_name?.trim();
+  return compound ? `Sample: ${sample} | Compound: ${compound}` : `Sample: ${sample}`;
+};
+
+const formatQuantity = (entry: QueueEntry) => {
+  if (entry.quantity !== undefined && entry.quantity !== null) {
+    return `Quantity: ${entry.quantity} ${entry.unit || ""}`.trim();
+  }
+  return "Quantity pending sync";
 };
 
 const technicianDecisionText = (status?: string) => {
@@ -402,25 +438,22 @@ export default function TechnicianTasksPage() {
                   Priority: {(item.priority || "standard").toUpperCase()}
                 </Text>
                 <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  Customer: {item.customer_name || "N/A"} | Company: {item.company_name || "N/A"}
+                  {formatCustomerCompany(item)}
                 </Text>
                 <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  Sample: {item.sample_type || "N/A"} | Compound: {item.compound_name || "N/A"}
+                  {formatSampleCompound(item)}
                 </Text>
                 <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  Quantity: {item.quantity ?? "N/A"} {item.unit || ""}
+                  {formatQuantity(item)}
                 </Text>
                 <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
                   Order ID: {item.order_id} | Queue ID: {item.queue_id}
                 </Text>
                 <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  Samples:{" "}
-                  {item.sample_types?.length
-                    ? item.sample_types.join(", ")
-                    : "N/A"}
+                  Samples: {formatText(item.sample_types?.join(", "), "Pending sync")}
                 </Text>
                 <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  Equipment: {item.equipment_name || "Unassigned"}
+                  Equipment: {formatText(item.equipment_name, "Pending assignment")}
                 </Text>
                 <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
                   Start: {item.scheduled_start || "Not scheduled"}
@@ -471,20 +504,17 @@ export default function TechnicianTasksPage() {
                 Order ID: {item.order_id} | Queue ID: {item.queue_id}
               </Text>
               <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                Customer: {item.customer_name || "N/A"} | Company: {item.company_name || "N/A"}
+                {formatCustomerCompany(item)}
               </Text>
               <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                Sample: {item.sample_type || "N/A"} | Compound: {item.compound_name || "N/A"}
+                {formatSampleCompound(item)}
               </Text>
               <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                Samples:{" "}
-                {item.sample_types?.length
-                  ? item.sample_types.join(", ")
-                  : "N/A"}
+                Samples: {formatText(item.sample_types?.join(", "), "Pending sync")}
               </Text>
               <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
                 Finished:{" "}
-                {item.scheduled_end || item.estimated_completion || "N/A"}
+                {item.scheduled_end || item.estimated_completion || "Pending sync"}
               </Text>
               {item.notes ? (
                 <Text style={[styles.subStrong, { color: theme.colors.text }]}>Notes: {item.notes}</Text>

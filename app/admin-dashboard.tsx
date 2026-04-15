@@ -17,6 +17,7 @@ import {
 } from "../lib/admin-api";
 import { fetchCalendarData, type QueueEntry } from "../lib/calendar-api";
 import { useNotificationsState } from "../lib/notifications-store";
+import { normalizeOrderStatusForCompare } from "../lib/order-status-normalize";
 import { useAppTheme } from "../lib/theme";
 
 export default function AdminDashboardPage() {
@@ -93,7 +94,7 @@ export default function AdminDashboardPage() {
     const high = orders.filter((o) => o.priority === "high").length;
     const usersCount = users.length;
     const completed = queue.filter(
-      (q) => (q.order_status || "").toLowerCase() === "completed",
+      (q) => normalizeOrderStatusForCompare(q.order_status) === "completed",
     ).length;
     return { total, high, equipmentCount, usersCount, completed };
   }, [equipmentCount, orders, users, queue]);

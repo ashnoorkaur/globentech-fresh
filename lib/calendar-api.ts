@@ -166,6 +166,21 @@ const toStringOrNull = (value: unknown) => {
   return null;
 };
 
+const toRecordOrNull = (value: unknown): Record<string, unknown> | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+};
+
+const firstString = (...values: unknown[]) => {
+  for (const value of values) {
+    const next = toStringOrNull(value);
+    if (next) return next;
+  }
+  return null;
+};
+
 const toStringArray = (value: unknown): string[] => {
   if (Array.isArray(value)) {
     return value
@@ -179,6 +194,18 @@ const toStringArray = (value: unknown): string[] => {
       .filter(Boolean);
   }
   return [];
+};
+
+const toLooseNumber = (value: unknown): number | undefined => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const match = value.match(/\d+(?:\.\d+)?/);
+    if (match) {
+      const parsed = Number(match[0]);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return undefined;
 };
 
 const parseOrderIdFromOrderNumber = (orderNumber: string): number | null => {
@@ -220,6 +247,18 @@ const toFallbackQueueEntry = (
   if (!item || typeof item !== "object") return null;
 
   const row = item as Record<string, unknown>;
+  const customerRecord =
+    toRecordOrNull(row.customer_details ?? row.customerDetails) ||
+    toRecordOrNull(row.customer);
+  const companyRecord =
+    toRecordOrNull(row.company_details ?? row.companyDetails) ||
+    toRecordOrNull(row.company);
+  const sampleRecord =
+    toRecordOrNull(row.sample_details ?? row.sampleDetails) ||
+    toRecordOrNull(row.sample);
+  const equipmentRecord =
+    toRecordOrNull(row.equipment_details ?? row.equipmentDetails) ||
+    toRecordOrNull(row.equipment);
   const orderNumber =
     toStringOrNull(row.order_number ?? row.orderNumber ?? row.title) ||
     `ORDER-${index + 1}`;
@@ -242,22 +281,63 @@ const toFallbackQueueEntry = (
     order_number: orderNumber,
     order_status: rawStatus,
     priority: toStringOrNull(row.priority) || "standard",
-    customer_name: toStringOrNull(
-      row.customer_name ?? row.customerName ?? row.customer,
+    customer_name: firstString(
+      row.customer_name,
+      row.customerName,
+      row.customer_full_name,
+      row.customerFullName,
+      row.client_name,
+      row.clientName,
+      customerRecord?.name,
+      customerRecord?.full_name,
+      customerRecord?.customer_name,
+      typeof row.customer === "string" ? row.customer : null,
     ) || undefined,
-    company_name: toStringOrNull(
-      row.company_name ?? row.companyName ?? row.company,
+    company_name: firstString(
+      row.company_name,
+      row.companyName,
+      row.customer_company,
+      row.customerCompany,
+      row.organization,
+      row.organization_name,
+      row.organizationName,
+      companyRecord?.name,
+      companyRecord?.company_name,
+      companyRecord?.companyName,
+      customerRecord?.company,
+      customerRecord?.company_name,
+      customerRecord?.companyName,
+      typeof row.company === "string" ? row.company : null,
     ) || undefined,
-    sample_type: toStringOrNull(row.sample_type ?? row.sampleType) || undefined,
-    compound_name: toStringOrNull(
-      row.compound_name ?? row.compoundName ?? row.compound,
+    sample_type: firstString(
+      row.sample_type,
+      row.sampleType,
+      row.sample_name,
+      row.sampleName,
+      row.analysis_type,
+      row.analysisType,
+      row.test_type,
+      row.testType,
+      sampleRecord?.type,
+      sampleRecord?.sample_type,
+      sampleRecord?.sampleType,
+      sampleRecord?.name,
+      typeof row.sample === "string" ? row.sample : null,
     ) || undefined,
-    quantity:
-      typeof row.quantity === "number"
-        ? row.quantity
-        : typeof row.quantity === "string"
-          ? Number(row.quantity) || undefined
-          : undefined,
+    compound_name: firstString(
+      row.compound_name,
+      row.compoundName,
+      row.compound,
+      row.material,
+      row.material_name,
+      row.materialName,
+      row.product_name,
+      row.productName,
+      sampleRecord?.compound_name,
+      sampleRecord?.compoundName,
+      sampleRecord?.compound,
+    ) || undefined,
+    quantity: toLooseNumber(row.quantity ?? row.qty ?? row.sample_count ?? row.sampleCount),
     unit: (toStringOrNull(row.unit) as QueueEntry["unit"]) || undefined,
     notes: toStringOrNull(row.notes) || undefined,
     assigned_at:
@@ -290,10 +370,40 @@ const toFallbackQueueEntry = (
       toStringOrNull(
         row.technician_status_updated_by ?? row.technicianStatusUpdatedBy,
       ) || undefined,
-    sample_types: toStringArray(row.sample_types ?? row.sampleTypes),
+    sample_types: (() => {
+      const values = toStringArray(
+        row.sample_types ??
+          row.sampleTypes ??
+          row.samples ??
+          row.sample_list ??
+          row.sampleList,
+      );
+      const primarySample = firstString(
+        row.sample_type,
+        row.sampleType,
+        row.sample_name,
+        row.sampleName,
+        sampleRecord?.type,
+        sampleRecord?.sample_type,
+        sampleRecord?.sampleType,
+        sampleRecord?.name,
+      );
+      if (values.length === 0 && primarySample) {
+        return [primarySample];
+      }
+      return values;
+    })(),
     equipment_id: toNullableNumber(row.equipment_id ?? row.equipmentId),
-    equipment_name: toStringOrNull(
-      row.equipment_name ?? row.equipmentName ?? row.resource,
+    equipment_name: firstString(
+      row.equipment_name,
+      row.equipmentName,
+      row.resource,
+      row.machine_name,
+      row.machineName,
+      equipmentRecord?.name,
+      equipmentRecord?.equipment_name,
+      equipmentRecord?.equipmentName,
+      typeof row.equipment === "string" ? row.equipment : null,
     ),
     scheduled_start: toStringOrNull(
       row.scheduled_start ?? row.start ?? row.start_time ?? row.startTime,
@@ -309,14 +419,50 @@ const toFallbackQueueEntry = (
   };
 };
 
+const mergeQueueEntry = (primary: QueueEntry, fallback: QueueEntry): QueueEntry => ({
+  ...primary,
+  customer_name: primary.customer_name || fallback.customer_name,
+  company_name: primary.company_name || fallback.company_name,
+  sample_type: primary.sample_type || fallback.sample_type,
+  compound_name: primary.compound_name || fallback.compound_name,
+  quantity: primary.quantity ?? fallback.quantity,
+  unit: primary.unit || fallback.unit,
+  notes: primary.notes || fallback.notes,
+  assigned_at: primary.assigned_at || fallback.assigned_at,
+  assigned_technician_uid:
+    primary.assigned_technician_uid || fallback.assigned_technician_uid,
+  assigned_technician_name:
+    primary.assigned_technician_name || fallback.assigned_technician_name,
+  assigned_technician_email:
+    primary.assigned_technician_email || fallback.assigned_technician_email,
+  technician_status_action:
+    primary.technician_status_action || fallback.technician_status_action,
+  technician_status_note:
+    primary.technician_status_note || fallback.technician_status_note,
+  technician_status_updated_at:
+    primary.technician_status_updated_at || fallback.technician_status_updated_at,
+  technician_status_updated_by:
+    primary.technician_status_updated_by || fallback.technician_status_updated_by,
+  sample_types:
+    primary.sample_types.length > 0 ? primary.sample_types : fallback.sample_types,
+  equipment_id: primary.equipment_id ?? fallback.equipment_id,
+  equipment_name: primary.equipment_name || fallback.equipment_name,
+  scheduled_start: primary.scheduled_start || fallback.scheduled_start,
+  scheduled_end: primary.scheduled_end || fallback.scheduled_end,
+  estimated_completion:
+    primary.estimated_completion || fallback.estimated_completion,
+  position: primary.position || fallback.position,
+  queue_type: primary.queue_type || fallback.queue_type,
+});
+
 export async function fetchTechnicianWorkQueue(query?: CalendarQuery) {
   const endpoints = getApiEndpoints();
   const calendarData = await fetchCalendarData(query);
 
   let mergedQueue = [...(calendarData.queue ?? [])];
-  const knownOrderIds = new Set(mergedQueue.map((item) => item.order_id));
-  const knownOrderNumbers = new Set(
-    mergedQueue.map((item) => item.order_number.toLowerCase()),
+  const knownOrderIds = new Map(mergedQueue.map((item, index) => [item.order_id, index]));
+  const knownOrderNumbers = new Map(
+    mergedQueue.map((item, index) => [item.order_number.toLowerCase(), index]),
   );
 
   try {
@@ -328,18 +474,22 @@ export async function fetchTechnicianWorkQueue(query?: CalendarQuery) {
       .map((row, index) => toFallbackQueueEntry(row, index))
       .filter((entry): entry is QueueEntry => Boolean(entry));
 
-    const appendable = fallbackRows.filter((entry) => {
-      const key = entry.order_number.toLowerCase();
-      if (knownOrderIds.has(entry.order_id) || knownOrderNumbers.has(key)) {
-        return false;
-      }
-      knownOrderIds.add(entry.order_id);
-      knownOrderNumbers.add(key);
-      return true;
-    });
+    for (const entry of fallbackRows) {
+      const orderNumberKey = entry.order_number.toLowerCase();
+      const existingIndex =
+        knownOrderIds.get(entry.order_id) ?? knownOrderNumbers.get(orderNumberKey);
 
-    if (appendable.length > 0) {
-      mergedQueue = [...mergedQueue, ...appendable];
+      if (existingIndex !== undefined) {
+        mergedQueue[existingIndex] = mergeQueueEntry(
+          mergedQueue[existingIndex],
+          entry,
+        );
+        continue;
+      }
+
+      knownOrderIds.set(entry.order_id, mergedQueue.length);
+      knownOrderNumbers.set(orderNumberKey, mergedQueue.length);
+      mergedQueue.push(entry);
     }
   } catch {
     // Fallback endpoint is optional; keep queue-only mode if unavailable.
