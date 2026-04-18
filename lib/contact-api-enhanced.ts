@@ -5,8 +5,10 @@
  * with fallback mechanisms if direct email fails.
  */
 
-import { apiRequest } from "./api-client";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { apiRequest, getApiBaseUrlCandidates } from "./api-client";
 import { getApiEndpoints } from "./backend-endpoints";
+import { getWebRoutes } from "./web-routes";
 
 export type ContactSubmission = {
   id?: number;
@@ -14,6 +16,7 @@ export type ContactSubmission = {
   name: string;
   email: string;
   phone?: string;
+  order_number?: string;
   subject: string;
   message: string;
   category?: "technical" | "billing" | "general" | "order";
@@ -26,6 +29,58 @@ type SuccessEnvelope<T> = {
   data?: T;
   message?: string;
   error?: string;
+};
+
+const CONTACT_QUERY_STORAGE_KEY = "globentech-mobile:admin-queries:v1";
+let adminContactsEndpointMissing = false;
+
+const normalizeQueryText = (value?: string | null) => (value || "").replace(/\s+/g, " ").trim();
+
+const toStoredQueryKey = (submission: ContactSubmission) =>
+  [
+    normalizeQueryText(submission.name).toLowerCase(),
+    normalizeQueryText(submission.email).toLowerCase(),
+    normalizeQueryText(submission.order_number).toUpperCase(),
+    normalizeQueryText(submission.subject).toLowerCase(),
+    normalizeQueryText(submission.message).toLowerCase(),
+  ].join("|");
+
+const readStoredQueries = async (): Promise<ContactSubmission[]> => {
+  try {
+    const raw = await AsyncStorage.getItem(CONTACT_QUERY_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ContactSubmission[]) : [];
+  } catch {
+    return [];
+  }
+};
+
+const writeStoredQueries = async (items: ContactSubmission[]) => {
+  try {
+    await AsyncStorage.setItem(CONTACT_QUERY_STORAGE_KEY, JSON.stringify(items));
+  } catch {
+    // Ignore storage failures.
+  }
+};
+
+export const rememberAdminContactQuery = async (submission: ContactSubmission) => {
+  const existing = await readStoredQueries();
+  const key = toStoredQueryKey(submission);
+  const nextItems = [
+    {
+      ...submission,
+      name: normalizeQueryText(submission.name),
+      email: normalizeQueryText(submission.email),
+      order_number: normalizeQueryText(submission.order_number) || undefined,
+      subject: normalizeQueryText(submission.subject),
+      message: normalizeQueryText(submission.message),
+      created_at: submission.created_at || new Date().toISOString(),
+    },
+    ...existing.filter((item) => toStoredQueryKey(item) !== key),
+  ].slice(0, 100);
+
+  await writeStoredQueries(nextItems);
 };
 
 const unwrap = <T>(payload: T | SuccessEnvelope<T>): T => {
@@ -72,6 +127,62 @@ function getContactErrorMessage(error: unknown): string {
  * 3. Triggers admin notification (email/in-app alert)
  * 4. Provides fallback logging if notification fails
  */
+const submitLegacyContactForm = async (
+  submission: ContactSubmission,
+): Promise<SuccessEnvelope<{ id?: number; ticket_number?: string }>> => {
+  const route = getWebRoutes().contact;
+  const candidates = getApiBaseUrlCandidates().slice(0, 2);
+  let lastError: Error | null = null;
+
+  for (const base of candidates) {
+    try {
+      const response = await fetch(`${base}${route}`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          order_number: submission.order_number || "",
+          subject: submission.subject,
+          message: submission.message,
+        }).toString(),
+      });
+
+      const text = await response.text();
+      if (!response.ok) {
+        lastError = new Error(`Contact form failed with status ${response.status}`);
+        continue;
+      }
+
+      if (/email address\s+password\s+login|<title>\s*login/i.test(text)) {
+        throw new Error("Session expired. Please ensure you're logged in and try again.");
+      }
+
+      if (/required field|failed to send|unable to send/i.test(text)) {
+        throw new Error("The shared website backend could not send your message.");
+      }
+
+      await rememberAdminContactQuery({
+        ...submission,
+        created_at: new Date().toISOString(),
+      });
+
+      return {
+        success: true,
+        data: {
+          ticket_number: `WEB-${Date.now()}`,
+        },
+        message: "Message sent successfully.",
+      };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError ?? new Error("Failed to submit contact form.");
+};
+
 export async function submitContactForm(
   submission: ContactSubmission,
 ): Promise<SuccessEnvelope<{ id?: number; ticket_number?: string }>> {
@@ -94,10 +205,19 @@ export async function submitContactForm(
       throw new Error(response.message || "Failed to submit contact form.");
     }
 
+    await rememberAdminContactQuery({
+      ...submission,
+      created_at: new Date().toISOString(),
+    });
+
     return response;
   } catch (error) {
-    const errorMsg = getContactErrorMessage(error);
-    throw new Error(errorMsg);
+    try {
+      return await submitLegacyContactForm(submission);
+    } catch {
+      const errorMsg = getContactErrorMessage(error);
+      throw new Error(errorMsg);
+    }
   }
 }
 
@@ -146,6 +266,10 @@ export async function fetchAdminContacts(
 ) {
   const endpoints = getApiEndpoints();
 
+  if (adminContactsEndpointMissing) {
+    return [];
+  }
+
   try {
     const url = status
       ? `${endpoints.adminContactNotifications || "/api/admin-contacts.php"}?status=${status}`
@@ -156,12 +280,44 @@ export async function fetchAdminContacts(
 
     return unwrap(response) as ContactSubmission[];
   } catch (error) {
-    console.warn(
-      "Could not fetch admin contacts:",
-      error instanceof Error ? error.message : String(error),
-    );
+    const message = error instanceof Error ? error.message : String(error);
+    if (
+      /404|not found|admin-contact-notifications\.php|admin-contacts\.php/i.test(message)
+    ) {
+      adminContactsEndpointMissing = true;
+      return [];
+    }
+
+    console.warn("Could not fetch admin contacts:", message);
     return [];
   }
+}
+
+export async function fetchAdminQueries() {
+  const [stored, remote] = await Promise.all([
+    readStoredQueries(),
+    fetchAdminContacts().catch(() => []),
+  ]);
+
+  const merged = new Map<string, ContactSubmission>();
+  [...remote, ...stored].forEach((item) => {
+    const normalized: ContactSubmission = {
+      ...item,
+      name: normalizeQueryText(item.name),
+      email: normalizeQueryText(item.email),
+      order_number: normalizeQueryText(item.order_number) || undefined,
+      subject: normalizeQueryText(item.subject),
+      message: normalizeQueryText(item.message),
+      created_at: item.created_at || new Date().toISOString(),
+    };
+    merged.set(toStoredQueryKey(normalized), normalized);
+  });
+
+  return Array.from(merged.values()).sort((a, b) => {
+    const at = new Date(a.created_at || 0).getTime();
+    const bt = new Date(b.created_at || 0).getTime();
+    return bt - at;
+  });
 }
 
 /**

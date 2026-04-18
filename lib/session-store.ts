@@ -1,5 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useSyncExternalStore } from "react";
+import { clearScreenCache } from "../hooks/use-screen-cache";
 import { fetchSessionUser, type AuthUser } from "./auth-api";
 import { clearFirebaseSession, setFirebaseSession } from "./firebase-rest";
 
@@ -30,10 +31,19 @@ const subscribe = (listener: () => void) => {
 
 const getSnapshot = () => state;
 
-const normalizeSessionRole = (role?: string): AuthUser["role"] => {
-  const value = (role || "").toLowerCase();
-  if (value === "administrator" || value === "admin") return "administrator";
-  if (value === "technician" || value === "tech") return "technician";
+const normalizeSessionRole = (
+  role?: string,
+  emailHint?: string,
+): AuthUser["role"] => {
+  const value = (role || "").trim().toLowerCase();
+  const email = (emailHint || "").trim().toLowerCase();
+
+  if (email === "admin@globentech.com") return "administrator";
+  if (email === "tech@globentech.com") return "technician";
+  if (email === "customer@globentech.com") return "customer";
+
+  if (value.includes("admin")) return "administrator";
+  if (value.includes("tech")) return "technician";
   return "customer";
 };
 
@@ -55,7 +65,7 @@ const normalizeUser = (user: AuthUser | null): AuthUser | null => {
   if (!user) return null;
   return {
     ...user,
-    role: normalizeSessionRole(user.role as unknown as string),
+    role: normalizeSessionRole(user.role as unknown as string, user.email),
     email: user.email === "session@local" ? "" : user.email,
     full_name: isGenericSessionName(user.full_name) ? "" : user.full_name,
   };
@@ -84,9 +94,10 @@ const mergeWithCurrentUser = (
     return incoming;
   }
 
-  const currentRole = normalizeSessionRole(current.role as unknown as string);
-  const incomingRole = normalizeSessionRole(incoming.role as unknown as string);
-  const preserveRole = currentRole !== "customer" && incomingRole === "customer";
+  const incomingRole = normalizeSessionRole(
+    incoming.role as unknown as string,
+    incoming.email,
+  );
   const incomingName = (incoming.full_name || "").trim();
   const incomingEmail = (incoming.email || "").trim();
 
@@ -101,7 +112,7 @@ const mergeWithCurrentUser = (
       incomingName && !isGenericSessionName(incomingName)
         ? incoming.full_name
         : current.full_name,
-    role: preserveRole ? currentRole : incomingRole,
+    role: incomingRole,
   };
 };
 
@@ -121,8 +132,26 @@ const persistSessionUser = async (user: AuthUser | null) => {
   await AsyncStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(user));
 };
 
+const shouldResetScreenCache = (
+  previous: AuthUser | null,
+  next: AuthUser | null,
+) => {
+  if (!previous && !next) return false;
+  if (!previous || !next) return true;
+
+  return (
+    previous.role !== next.role ||
+    previous.id !== next.id ||
+    (previous.email || "").trim().toLowerCase() !==
+      (next.email || "").trim().toLowerCase()
+  );
+};
+
 const applySessionUser = (user: AuthUser | null, loading: boolean) => {
   const normalized = normalizeUser(mergeWithCurrentUser(user, state.user));
+  if (shouldResetScreenCache(state.user, normalized)) {
+    clearScreenCache();
+  }
   syncFirebaseSession(normalized);
   state = { user: normalized, loading };
   emit();
@@ -140,22 +169,19 @@ export async function hydrateSession() {
 
     try {
       const persistedRaw = await AsyncStorage.getItem(SESSION_STORAGE_KEY);
-      if (persistedRaw) {
-        const persistedUser = normalizeUser(JSON.parse(persistedRaw) as AuthUser);
-        applySessionUser(persistedUser, true);
-      }
+      const persistedUser = persistedRaw
+        ? normalizeUser(JSON.parse(persistedRaw) as AuthUser)
+        : null;
 
-      const user = mergeWithCurrentUser(await fetchSessionUser(), state.user);
-      applySessionUser(user, false);
-      await persistSessionUser(normalizeUser(user));
+      const liveUser = await fetchSessionUser();
+      const mergedUser = liveUser
+        ? mergeWithCurrentUser(liveUser, persistedUser)
+        : null;
+
+      applySessionUser(mergedUser, false);
+      await persistSessionUser(normalizeUser(mergedUser));
       return;
     } catch {
-      if (state.user) {
-        state = { ...state, loading: false };
-        emit();
-        return;
-      }
-
       applySessionUser(null, false);
       await persistSessionUser(null);
     }

@@ -195,12 +195,29 @@ const createSnapshot = (rows: NotificationOrderRow[]) => {
 const routeForRole = (
   role: "administrator" | "customer" | "technician",
   status?: string,
+  orderNumber?: string,
 ) => {
+  const encodedOrder = orderNumber ? encodeURIComponent(orderNumber) : "";
+
   if (role === "administrator") {
-    return status === "pending" ? "/admin-approvals" : "/admin-order-history";
+    if (status === "pending") {
+      return encodedOrder
+        ? `/admin-approvals?highlight=${encodedOrder}`
+        : "/admin-approvals";
+    }
+
+    return encodedOrder
+      ? `/admin-order-history?search=${encodedOrder}`
+      : "/admin-order-history";
   }
-  if (role === "customer") return "/customer-my-orders";
-  return "/technician-calendar";
+  if (role === "customer") {
+    return encodedOrder
+      ? `/customer-my-orders?search=${encodedOrder}`
+      : "/customer-my-orders";
+  }
+  return encodedOrder
+    ? `/technician-calendar?search=${encodedOrder}`
+    : "/technician-calendar";
 };
 
 const formatScheduleMessage = (snapshot: OrderNotificationSnapshot) => {
@@ -236,19 +253,29 @@ const syncWithSnapshot = (
           ? `${orderRef} is waiting for approval.`
           : `${orderRef} has been added.`,
         "orders",
-        routeForRole(role, currentStatus),
+        routeForRole(role, currentStatus, row.order_number),
       );
       return;
     }
 
     if (prevSnapshot.status !== currentStatus) {
+      if (role === "customer" && currentStatus === "payment_pending") {
+        pushNotification(
+          "Payment Required",
+          `${orderRef} was approved and is now waiting for your payment before technician processing starts.`,
+          "orders",
+          routeForRole(role, currentStatus, row.order_number),
+        );
+        return;
+      }
+
       pushNotification(
         role === "customer"
           ? "Your Order Status Changed"
           : "Order Status Changed",
         `${orderRef} changed from ${toStatusText(prevSnapshot.status)} to ${toStatusText(currentStatus)}.`,
         "orders",
-        routeForRole(role, currentStatus),
+        routeForRole(role, currentStatus, row.order_number),
       );
       return;
     }
@@ -260,7 +287,7 @@ const syncWithSnapshot = (
           ? `${orderRef} is now assigned to ${currentSnapshot.assignedTechnician}.`
           : `${orderRef} no longer has an assigned technician.`,
         "orders",
-        routeForRole(role, currentStatus),
+        routeForRole(role, currentStatus, row.order_number),
       );
       return;
     }
@@ -274,7 +301,7 @@ const syncWithSnapshot = (
         "Order Schedule Updated",
         `${orderRef}: ${formatScheduleMessage(currentSnapshot)}`,
         "orders",
-        routeForRole(role, currentStatus),
+        routeForRole(role, currentStatus, row.order_number),
       );
       return;
     }
@@ -284,7 +311,7 @@ const syncWithSnapshot = (
         "Equipment Updated",
         `${orderRef} is now scheduled on ${currentSnapshot.equipmentName}.`,
         "orders",
-        routeForRole(role, currentStatus),
+        routeForRole(role, currentStatus, row.order_number),
       );
       return;
     }
@@ -300,7 +327,7 @@ const syncWithSnapshot = (
           ? `${orderRef}: ${currentSnapshot.technicianNote}`
           : `${orderRef} received a technician update.`,
         "orders",
-        routeForRole(role, currentStatus),
+        routeForRole(role, currentStatus, row.order_number),
       );
     }
   });

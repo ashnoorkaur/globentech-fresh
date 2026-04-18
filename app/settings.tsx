@@ -36,6 +36,14 @@ import { clearNotifications } from "../lib/notifications-store";
 import { setSessionUser, useSessionState } from "../lib/session-store";
 import { getIsDarkMode, setDarkMode, useAppTheme } from "../lib/theme";
 
+const normalizeRoleValue = (role?: string) => {
+  const value = (role || "").trim().toLowerCase();
+  if (value.includes("admin")) return "administrator" as const;
+  if (value.includes("tech")) return "technician" as const;
+  if (value.includes("customer")) return "customer" as const;
+  return undefined;
+};
+
 export default function SettingsPage() {
   const theme = useAppTheme();
   const session = useSessionState();
@@ -81,14 +89,19 @@ export default function SettingsPage() {
       setPhone(p.phone || "");
       setCompanyName(p.company_name || "");
       setAddress(p.address || "");
+      const resolvedRole =
+        normalizeRoleValue(session.user?.role) ||
+        normalizeRoleValue(p.role) ||
+        "customer";
+
       setSessionUser({
         id: p.id,
         full_name: p.full_name,
         email: p.email,
-        role: session.user?.role || p.role,
+        role: resolvedRole,
       });
 
-      if (session.user?.role === "administrator") {
+      if (resolvedRole === "administrator") {
         const list = await fetchAdminUserList();
         setUsers(list);
       }

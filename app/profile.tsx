@@ -68,6 +68,14 @@ function InfoRow({
   );
 }
 
+const normalizeRoleValue = (role?: string) => {
+  const value = (role || "").trim().toLowerCase();
+  if (value === "administrator" || value === "admin") return "administrator" as const;
+  if (value === "technician" || value === "tech") return "technician" as const;
+  if (value === "customer") return "customer" as const;
+  return undefined;
+};
+
 export default function ProfilePage() {
   const theme = useAppTheme();
   const session = useSessionState();
@@ -79,11 +87,15 @@ export default function ProfilePage() {
   const loadData = useCallback(async () => {
     try {
       const p = await fetchMyProfile();
+      const resolvedRole =
+        normalizeRoleValue(session.user?.role) ||
+        normalizeRoleValue(p.role) ||
+        "customer";
       setProfile({
         ...p,
-        role: session.user?.role || p.role,
+        role: resolvedRole,
+        is_active: session.user?.email ? true : p.is_active !== false,
       });
-      // Sync session store with fetched profile data
       const resolvedName = !isRolePlaceholderName(p.full_name)
         ? p.full_name
         : "";
@@ -91,7 +103,7 @@ export default function ProfilePage() {
         id: p.id,
         full_name: resolvedName,
         email: p.email,
-        role: session.user?.role || p.role,
+        role: resolvedRole,
       });
     } catch {
       // Customer profile endpoint can occasionally fail on some backend paths;
@@ -119,11 +131,12 @@ export default function ProfilePage() {
           email: resolvedEmail,
           full_name: resolvedName,
         });
+        const resolvedRole = normalizeRoleValue(sessionUser.role) || normalizeRoleValue(session.user?.role) || "customer";
         setProfile((prev) => ({
           id: resolvedId,
           full_name: resolvedName,
           email: resolvedEmail,
-          role: session.user?.role || sessionUser.role,
+          role: resolvedRole,
           is_active: prev?.is_active ?? true,
           phone: prev?.phone,
           company_name: prev?.company_name,
@@ -147,31 +160,33 @@ export default function ProfilePage() {
 
   useFocusedPolling(loadData, { intervalMs: 25000 });
 
+  const resolvedRole = useMemo(() => {
+    return normalizeRoleValue(session.user?.role) || normalizeRoleValue(profile?.role);
+  }, [profile?.role, session.user?.role]);
+
   const menuItems = useMemo(() => {
-    const role = session.user?.role;
-    if (role === "administrator") return adminMenu;
-    if (role === "technician") return technicianMenu;
-    if (role === "customer") return customerMenu;
+    if (resolvedRole === "administrator") return adminMenu;
+    if (resolvedRole === "technician") return technicianMenu;
+    if (resolvedRole === "customer") return customerMenu;
     return guestMenu;
-  }, [session.user?.role]);
+  }, [resolvedRole]);
 
   const dashboardRoute = useMemo(() => {
-    const role = session.user?.role;
-    if (role === "administrator") return "/admin-dashboard" as const;
-    if (role === "technician") return "/technician-dashboard" as const;
-    if (role === "customer") return "/customer-dashboard" as const;
+    if (resolvedRole === "administrator") return "/admin-dashboard" as const;
+    if (resolvedRole === "technician") return "/technician-dashboard" as const;
+    if (resolvedRole === "customer") return "/customer-dashboard" as const;
     return "/login" as const;
-  }, [session.user?.role]);
+  }, [resolvedRole]);
 
   const roleLabel = useMemo(() => {
-    const role = session.user?.role || profile?.role;
-    if (!role) return "Guest";
-    if (role === "administrator") return "Admin";
-    return role.charAt(0).toUpperCase() + role.slice(1);
-  }, [session.user?.role, profile?.role]);
+    if (!resolvedRole) return "Guest";
+    if (resolvedRole === "administrator") return "Admin";
+    return resolvedRole.charAt(0).toUpperCase() + resolvedRole.slice(1);
+  }, [resolvedRole]);
 
-  const statusBadgeColor =
-    profile?.is_active !== false ? theme.colors.success : theme.colors.danger;
+  const isActive = profile?.is_active !== false || Boolean(session.user?.email);
+
+  const statusBadgeColor = isActive ? theme.colors.success : theme.colors.danger;
 
   const resolvedProfileId =
     profile?.id && profile.id > 0
@@ -225,7 +240,7 @@ export default function ProfilePage() {
       menuItems={menuItems}
       dashboardRoute={dashboardRoute}
       leftActionMode="back"
-      onLeftActionPress={() => router.push(dashboardRoute)}
+      onLeftActionPress={() => router.replace(dashboardRoute)}
     >
       <ScrollView
         style={{ flex: 1 }}
@@ -252,7 +267,7 @@ export default function ProfilePage() {
               ]}
             >
               <Text style={styles.statusText}>
-                {profile?.is_active !== false ? "Active" : "Inactive"}
+                {isActive ? "Active" : "Inactive"}
               </Text>
             </View>
           </View>

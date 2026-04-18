@@ -8,8 +8,10 @@ import {
     hasCachedScreenState,
     useCachedScreenState,
 } from "../hooks/use-screen-cache";
+import { formatBackendDateTime } from "../lib/date-time";
 import { useNotificationsState } from "../lib/notifications-store";
 import { normalizeOrderStatusForCompare } from "../lib/order-status-normalize";
+import { statusLabel, toLifecycleStatus } from "../lib/order-workflow";
 import {
     fetchCustomerMyOrders,
     type CustomerOrderRow,
@@ -17,29 +19,31 @@ import {
 import { useAppTheme } from "../lib/theme";
 
 const formatDateTime = (value?: string) => {
-  if (!value) return "N/A";
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString();
+  return formatBackendDateTime(value, "N/A");
 };
 
 const formatStatus = (value?: string) => {
-  const normalized = (value || "pending").replace(/_/g, " ");
-  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  return statusLabel(toLifecycleStatus(value));
+};
+
+const hasValue = (value?: string | number | null) => {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "number") return Number.isFinite(value);
+  return value.trim().length > 0;
 };
 
 export default function CustomerDashboardPage() {
   const theme = useAppTheme();
   const notifications = useNotificationsState();
   const [orders, setOrders] = useCachedScreenState<CustomerOrderRow[]>(
-    "customer-dashboard:orders",
+    "customer-dashboard:orders:v2",
     [],
   );
   const [loading, setLoading] = useState(
-    () => !hasCachedScreenState("customer-dashboard:orders"),
+    () => !hasCachedScreenState("customer-dashboard:orders:v2"),
   );
   const [lastUpdated, setLastUpdated] = useCachedScreenState(
-    "customer-dashboard:lastUpdated",
+    "customer-dashboard:lastUpdated:v2",
     "",
   );
   
@@ -60,16 +64,21 @@ export default function CustomerDashboardPage() {
 
   useFocusedPolling(loadOrders, { intervalMs: 20000 });
 
+  const dashboardOrders = useMemo(() => orders.slice(0, 2), [orders]);
+
   const stats = useMemo(() => {
     const total = orders.length;
+    const awaitingPayment = orders.filter(
+      (o) => toLifecycleStatus(o.status) === "payment_pending",
+    ).length;
     const inProgress = orders.filter((o) => {
       const status = normalizeOrderStatusForCompare(o.status);
-      return status !== "completed" && status !== "rejected";
+      return status !== "completed" && status !== "rejected" && status !== "payment_pending";
     }).length;
     const completed = orders.filter(
       (o) => normalizeOrderStatusForCompare(o.status) === "completed",
     ).length;
-    return { total, inProgress, completed };
+    return { total, awaitingPayment, inProgress, completed };
   }, [orders]);
 
   const recentNotifications = useMemo(
@@ -95,6 +104,10 @@ export default function CustomerDashboardPage() {
           },
         ]}
       >
+        <Text style={[styles.notificationMessage, { color: theme.colors.textMuted }]}> 
+          {loading ? "Loading latest orders..." : `Updated ${lastUpdated || "just now"}`}
+        </Text>
+
         <View style={styles.statRow}>
           <View
             style={[
@@ -122,10 +135,10 @@ export default function CustomerDashboardPage() {
             ]}
           >
             <Text style={[styles.statLabel, { color: theme.colors.textMuted }]}>
-              In Progress
+              Payment Due
             </Text>
-            <Text style={[styles.statValue, { color: theme.colors.secondary }]}>
-              {stats.inProgress}
+            <Text style={[styles.statValue, { color: theme.colors.info }]}>
+              {stats.awaitingPayment}
             </Text>
           </View>
           <View
@@ -146,7 +159,11 @@ export default function CustomerDashboardPage() {
           </View>
         </View>
 
-        {orders.slice(0, 3).map((order) => (
+        <Text style={[styles.notificationMessage, { color: theme.colors.textMuted }]}>
+          Showing your 2 latest orders here. Open My Orders to see the full list.
+        </Text>
+
+        {dashboardOrders.map((order) => (
           <View
             key={order.id}
             style={[
@@ -163,21 +180,39 @@ export default function CustomerDashboardPage() {
             <Text style={[styles.orderSub, { color: theme.colors.textMuted }]}>
               {formatStatus(order.status)} · Created {formatDateTime(order.created_at)}
             </Text>
-            <Text style={[styles.orderMeta, { color: theme.colors.textMuted }]}>
-              Company: {order.company_name || "N/A"}
-            </Text>
-            <Text style={[styles.orderMeta, { color: theme.colors.textMuted }]}>
-              Sample: {order.sample_type || "N/A"} | Compound: {order.compound_name || "N/A"}
-            </Text>
-            <Text style={[styles.orderMeta, { color: theme.colors.textMuted }]}>
-              Quantity: {order.quantity ?? "N/A"} {order.unit || ""} | ETA: {formatDateTime(order.estimated_completion)}
-            </Text>
-            <Text style={[styles.orderMeta, { color: theme.colors.textMuted }]}>
-              Technician: {order.assigned_technician_name || "Awaiting assignment"} | Equipment: {order.equipment_name || "Pending"}
-            </Text>
-            <Text style={[styles.orderMeta, { color: theme.colors.textMuted }]}>
-              Start: {formatDateTime(order.scheduled_start)} | End: {formatDateTime(order.scheduled_end)}
-            </Text>
+            {hasValue(order.company_name) ? (
+              <Text style={[styles.orderMeta, { color: theme.colors.textMuted }]}>
+                Company: {order.company_name}
+              </Text>
+            ) : null}
+            {hasValue(order.sample_type) || hasValue(order.compound_name) ? (
+              <Text style={[styles.orderMeta, { color: theme.colors.textMuted }]}>
+                {hasValue(order.sample_type) ? `Sample: ${order.sample_type}` : ""}
+                {hasValue(order.sample_type) && hasValue(order.compound_name) ? " | " : ""}
+                {hasValue(order.compound_name) ? `Compound: ${order.compound_name}` : ""}
+              </Text>
+            ) : null}
+            {hasValue(order.quantity) || hasValue(order.estimated_completion) ? (
+              <Text style={[styles.orderMeta, { color: theme.colors.textMuted }]}>
+                {hasValue(order.quantity) ? `Quantity: ${order.quantity} ${order.unit || ""}`.trim() : ""}
+                {hasValue(order.quantity) && hasValue(order.estimated_completion) ? " | " : ""}
+                {hasValue(order.estimated_completion) ? `ETA: ${formatDateTime(order.estimated_completion)}` : ""}
+              </Text>
+            ) : null}
+            {hasValue(order.assigned_technician_name) || hasValue(order.equipment_name) ? (
+              <Text style={[styles.orderMeta, { color: theme.colors.textMuted }]}>
+                {hasValue(order.assigned_technician_name) ? `Technician: ${order.assigned_technician_name}` : ""}
+                {hasValue(order.assigned_technician_name) && hasValue(order.equipment_name) ? " | " : ""}
+                {hasValue(order.equipment_name) ? `Equipment: ${order.equipment_name}` : ""}
+              </Text>
+            ) : null}
+            {hasValue(order.scheduled_start) || hasValue(order.scheduled_end) ? (
+              <Text style={[styles.orderMeta, { color: theme.colors.textMuted }]}>
+                {hasValue(order.scheduled_start) ? `Start: ${formatDateTime(order.scheduled_start)}` : ""}
+                {hasValue(order.scheduled_start) && hasValue(order.scheduled_end) ? " | " : ""}
+                {hasValue(order.scheduled_end) ? `End: ${formatDateTime(order.scheduled_end)}` : ""}
+              </Text>
+            ) : null}
             {order.notes ? (
               <Text style={[styles.orderMeta, { color: theme.colors.text }]}>
                 Notes: {order.notes}
@@ -186,6 +221,11 @@ export default function CustomerDashboardPage() {
             {order.technician_status_note ? (
               <Text style={[styles.orderMeta, { color: theme.colors.primary }]}> 
                 Latest Technician Update: {order.technician_status_note}
+              </Text>
+            ) : null}
+            {toLifecycleStatus(order.status) === "payment_pending" ? (
+              <Text style={[styles.orderAlert, { color: theme.colors.info }]}> 
+                Next Step: payment is required before this order moves to the technician queue.
               </Text>
             ) : null}
             {order.rejection_reason ? (
@@ -238,6 +278,8 @@ export default function CustomerDashboardPage() {
           </View>
         </View>
 
+        <Text style={[styles.notificationMessage, { color: theme.colors.textMuted }]}>Workflow: Submitted → Admin Approved → Payment Pending → Technician Processing → Completed.</Text>
+
         <View style={styles.actionRow}>
           <Pressable
             style={[
@@ -255,7 +297,7 @@ export default function CustomerDashboardPage() {
             ]}
             onPress={() => router.push("/customer-my-orders")}
           >
-            <Text style={styles.actionBtnText}>My Orders</Text>
+            <Text style={styles.actionBtnText}>See More</Text>
           </Pressable>
           <Pressable
             style={[

@@ -41,9 +41,9 @@ export default function TechnicianSamplesPage() {
           </Pressable>
           <Pressable
             style={[styles.btn, { backgroundColor: theme.colors.secondary }]}
-            onPress={() => router.push("/technician-equipment")}
+            onPress={() => router.push("/technician-calendar")}
           >
-            <Text style={styles.btnText}>Equipment</Text>
+            <Text style={styles.btnText}>Calendar</Text>
           </Pressable>
           <Pressable
             style={[styles.btn, { backgroundColor: theme.colors.buttonStart }]}

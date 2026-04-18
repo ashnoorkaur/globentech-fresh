@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <base href="/">
+<script>window.__APP_BASE__ = "";</script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Orders - GlobenTech</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/admin.css">
+    <style>
+        .orders-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .orders-header {
+            background: white;
+            border-radius: 10px;
+            padding: 25px 30px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .orders-header h1 {
+            color: #333;
+            margin-bottom: 5px;
+        }
+        .orders-header p {
+            color: #666;
+            margin: 0;
+        }
+        .status-cards {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        .status-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .status-card .count {
+            font-size: 32px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        .status-card .label {
+            color: #666;
+            font-size: 14px;
+            margin-top: 5px;
+        }
+        .status-card.pending .count { color: #ffc107; }
+        .status-card.approved .count { color: #17a2b8; }
+        .status-card.processing .count { color: #667eea; }
+        .status-card.completed .count { color: #28a745; }
+        .status-card.rejected .count { color: #dc3545; }
+        .orders-table-container {
+            background: white;
+            border-radius: 10px;
+            padding: 25px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        .orders-table-container h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 18px;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .status-submitted { background: #fff3cd; color: #856404; }
+        .status-approved { background: #d1ecf1; color: #0c5460; }
+        .status-processing { background: #e7e3ff; color: #5a4fcf; }
+        .status-completed { background: #d4edda; color: #155724; }
+        .status-rejected { background: #f8d7da; color: #721c24; }
+        .empty-orders {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+        .empty-orders h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+        .empty-orders p {
+            margin-bottom: 20px;
+        }
+        .new-order-btn {
+            display: inline-block;
+            margin-top: 15px;
+        }
+        .orders-table-footer {
+            margin-top: 20px;
+            text-align: right;
+        }
+    </style>
+</head>
+<body>
+    <header class="main-header">
+    <div class="header-content">
+        <div class="logo">
+            <a href="/dashboard/index.php">GlobenTech</a>
+        </div>
+
+        <nav class="main-nav">
+                                                <a href="/dashboard/index.php" class="">Dashboard</a>
+                    <a href="/orders/my-orders.php" class="">My Orders</a>
+                    <a href="/orders/order-history.php" class="">Order History</a>
+                    <a href="/orders/create-order.php" class="">New Order</a>
+                    <a href="/contact/index.php" class="">Contact Us</a>
+                                    </nav>
+
+        <div class="user-menu">
+                                                <span class="user-name">Test Customer</span>
+                                <a href="/account/settings.php" class="btn btn-small btn-account " style="margin-right:8px;">Account</a>
+                <a href="/auth/logout.php" class="btn btn-small">Logout</a>
+                    </div>
+    </div>
+</header>
+
+<!-- ================= CHATBOT START ================= -->
+
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+<div id="chatbot-button">
+    <span class="material-icons">chat</span>
+</div>
+
+<div id="chatbot-window">
+    <div id="chatbot-header">
+        <span>Virtual Assistant</span>
+        <span id="chatbot-close">&times;</span>
+    </div>
+
+    <div id="chatbot-messages">
+        <div id="quick-questions">
+            <div class="question">How do I approve orders?</div>
+            <div class="question">Where can I manage users?</div>
+            <div class="question">How do I manage equipment?</div>
+            <div class="question">Where can I view reports?</div>
+            <div class="question">How do I logout?</div>
+        </div>
+    </div>
+
+    <div id="chatbot-input-area">
+        <input type="text" id="chatbot-input" placeholder="Ask me something...">
+        <button id="chatbot-send">Send</button>
+    </div>
+</div>
+
+<link rel="stylesheet" href="/css/chat.css">
+<script>
+    window.__CHATBOT_AI_URL__ = "\/ai_reply.php";
+</script>
+<script type="module" src="/frontend/src/components/chatbot/chatbotWidget.js"></script>
+
+<!-- ================= CHATBOT END ================= -->
+ 
+    <div class="orders-container">
+        <div class="orders-header">
+            <h1>My Orders</h1>
+            <p>View and track all your submitted orders</p>
+        </div>
+ 
+        <div class="status-cards">
+            <div class="status-card pending">
+                <div class="count">4</div>
+                <div class="label">Pending</div>
+            </div>
+            <div class="status-card approved">
+                <div class="count">0</div>
+                <div class="label">Approved</div>
+            </div>
+            <div class="status-card processing">
+                <div class="count">0</div>
+                <div class="label">Processing</div>
+            </div>
+            <div class="status-card completed">
+                <div class="count">0</div>
+                <div class="label">Completed</div>
+            </div>
+            <div class="status-card rejected">
+                <div class="count">8</div>
+                <div class="label">Rejected</div>
+            </div>
+        </div>
+ 
+        <div class="orders-table-container">
+            <h2>Order History</h2>
+ 
+                            <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Order #</th>
+                                <th>Submitted</th>
+                                <th>Priority</th>
+                                <th>Samples</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                                                        <tr>
+                                <td>ORD-20260418-5530</td>
+                                <td>Apr 18, 2026 12:36</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-submitted">
+                                        Submitted                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=25" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260418-9174</td>
+                                <td>Apr 18, 2026 10:51</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-submitted">
+                                        Submitted                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=24" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260418-6904</td>
+                                <td>Apr 18, 2026 01:01</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-rejected">
+                                        Rejected                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=23" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260417-7958</td>
+                                <td>Apr 17, 2026 21:09</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=22" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260417-0133</td>
+                                <td>Apr 17, 2026 20:52</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-rejected">
+                                        Rejected                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=21" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260417-9531</td>
+                                <td>Apr 17, 2026 20:47</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-rejected">
+                                        Rejected                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=20" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260417-4381</td>
+                                <td>Apr 17, 2026 20:45</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-rejected">
+                                        Rejected                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=19" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260417-5367</td>
+                                <td>Apr 17, 2026 19:07</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-rejected">
+                                        Rejected                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=18" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260417-1158</td>
+                                <td>Apr 17, 2026 03:15</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-submitted">
+                                        Submitted                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=17" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260417-7803</td>
+                                <td>Apr 17, 2026 01:41</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-submitted">
+                                        Submitted                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=16" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260416-8048</td>
+                                <td>Apr 16, 2026 11:04</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-rejected">
+                                        Rejected                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=15" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260416-7700</td>
+                                <td>Apr 16, 2026 10:25</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=14" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260416-6897</td>
+                                <td>Apr 16, 2026 07:56</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=13" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260416-8239</td>
+                                <td>Apr 16, 2026 07:32</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-rejected">
+                                        Rejected                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=12" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260416-5604</td>
+                                <td>Apr 16, 2026 07:26</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=11" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260416-5738</td>
+                                <td>Apr 16, 2026 07:11</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=10" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260415-2612</td>
+                                <td>Apr 15, 2026 05:16</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=9" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260415-7601</td>
+                                <td>Apr 15, 2026 05:05</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=8" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260414-8018</td>
+                                <td>Apr 14, 2026 22:45</td>
+                                <td>
+                                    <span class="badge badge-priority">
+                                        Priority                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-results_available">
+                                        Results_available                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/invoice.php?order_id=7" class="btn btn-small btn-secondary">View Invoice</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260414-4736</td>
+                                <td>Apr 14, 2026 22:42</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=6" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260414-6533</td>
+                                <td>Apr 14, 2026 20:34</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=5" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260414-9658</td>
+                                <td>Apr 14, 2026 20:11</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-results_available">
+                                        Results_available                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/invoice.php?order_id=4" class="btn btn-small btn-secondary">View Invoice</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260414-0376</td>
+                                <td>Apr 14, 2026 20:04</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=3" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260414-8539</td>
+                                <td>Apr 14, 2026 17:22</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-payment_pending">
+                                        Payment_pending                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="orders/checkout.php?order_id=2" class="btn btn-small btn-primary">Pay Now</a>
+                                                                    </td>
+                            </tr>
+                                                        <tr>
+                                <td>ORD-20260414-7154</td>
+                                <td>Apr 14, 2026 15:11</td>
+                                <td>
+                                    <span class="badge badge-standard">
+                                        Standard                                    </span>
+                                </td>
+                                <td>1</td>
+                                <td>
+                                    <span class="status-badge status-rejected">
+                                        Rejected                                    </span>
+                                </td>
+                                <td>
+                                                                            <a href="/orders/order-details.php?order_id=1" class="btn btn-small btn-secondary">View Details</a>
+                                                                    </td>
+                            </tr>
+                                                    </tbody>
+                    </table>
+                </div>
+ 
+                <div class="orders-table-footer">
+                    <a href="/orders/create-order.php" class="btn btn-primary">Create New Order</a>
+                </div>
+                    </div>
+    </div>
+ 
+    <footer class="main-footer">
+    <div class="footer-content">
+        <div class="footer-section">
+            <h3>GlobenTech</h3>
+            <p>Laboratory Order Management System</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Project Information</h4>
+            <p>Course: Capstone Project</p>
+            <p>Final Project</p>
+            <p>SAIT - 2026</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Client</h4>
+            <p>GMJ Global Energy</p>
+            <p>Astra Agus Pramana</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Team Members</h4>
+            <p>Bhavya Bhavya, Evan Di Placido,</p>
+            <p>Ahmad Fakhry, Gaganpreet Kaur,</p>
+            <p>Ashnoor Kaur, Justice Mazerolle, Ravneet Kaur</p>
+        </div>
+    </div>
+
+    <div class="footer-bottom">
+        <p>&copy; 2026 GlobenTech. School Project - All rights reserved.</p>
+    </div>
+</footer>
+    <script type="module" src="frontend/src/pages/orders/myOrders.js"></script>
+</body>
+</html>
+
+

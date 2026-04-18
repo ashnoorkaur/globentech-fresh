@@ -34,6 +34,8 @@ type EndpointConfig = {
   accountAdminChangeRole?: string;
   accountAdminActivateUser?: string;
   accountAdminDeactivateUser?: string;
+  orderAssignTechnician?: string;
+  orderAssignEquipment?: string;
 };
 
 type ExpoExtraConfig = {
@@ -41,13 +43,13 @@ type ExpoExtraConfig = {
 };
 
 const defaultEndpoints: Required<EndpointConfig> = {
-  calendarData: "/api/calendar-data.php",
-  calendarReschedule: "/api/calendar-reschedule.php",
-  calendarReorder: "/api/calendar-reorder.php",
-  orderComplete: "/api/order-complete.php",
-  orderStartProcessing: "/api/order-start-processing.php",
-  getCalendarEvents: "/get_calendar_events.php",
-  equipmentAdd: "/api/equipment-add.php",
+  calendarData: "/api.php?endpoint=calendar-data",
+  calendarReschedule: "/api.php?endpoint=calendar-reschedule",
+  calendarReorder: "/api.php?endpoint=calendar-reorder",
+  orderComplete: "/api.php?endpoint=order-complete",
+  orderStartProcessing: "/api.php?endpoint=order-start-processing",
+  getCalendarEvents: "/api.php?endpoint=calendar-data",
+  equipmentAdd: "/api.php?endpoint=equipment-add",
   equipmentUpdate: "/api/equipment-update.php",
   equipmentList: "/api/equipment-list.php",
   contactSend: "/api/contact-send.php",
@@ -74,32 +76,54 @@ const defaultEndpoints: Required<EndpointConfig> = {
   accountAdminChangeRole: "/api/account-admin-change-role.php",
   accountAdminActivateUser: "/api/account-admin-activate-user.php",
   accountAdminDeactivateUser: "/api/account-admin-deactivate-user.php",
+  orderAssignTechnician: "/api/order-assign-technician.php",
+  orderAssignEquipment: "/api/order-assign-equipment.php",
 };
 
 const normalizePath = (path: string) =>
   path.startsWith("/") ? path : `/${path}`;
+
+const normalizeLiveCalendarEndpoint = (path: string) => {
+  const normalized = normalizePath(path);
+
+  switch (normalized) {
+    case "/api/calendar-data.php":
+    case "/get_calendar_events.php":
+      return "/api.php?endpoint=calendar-data";
+    case "/api/calendar-reschedule.php":
+      return "/api.php?endpoint=calendar-reschedule";
+    case "/api/calendar-reorder.php":
+      return "/api.php?endpoint=calendar-reorder";
+    case "/api/order-complete.php":
+      return "/api.php?endpoint=order-complete";
+    case "/api/order-start-processing.php":
+      return "/api.php?endpoint=order-start-processing";
+    default:
+      return normalized;
+  }
+};
 
 export const getApiEndpoints = () => {
   const extra = Constants.expoConfig?.extra as ExpoExtraConfig | undefined;
   const fromConfig = extra?.apiEndpoints ?? {};
 
   return {
-    calendarData: normalizePath(
+    calendarData: normalizeLiveCalendarEndpoint(
       fromConfig.calendarData || defaultEndpoints.calendarData,
     ),
-    calendarReschedule: normalizePath(
+    calendarReschedule: normalizeLiveCalendarEndpoint(
       fromConfig.calendarReschedule || defaultEndpoints.calendarReschedule,
     ),
-    calendarReorder: normalizePath(
+    calendarReorder: normalizeLiveCalendarEndpoint(
       fromConfig.calendarReorder || defaultEndpoints.calendarReorder,
     ),
-    orderComplete: normalizePath(
+    orderComplete: normalizeLiveCalendarEndpoint(
       fromConfig.orderComplete || defaultEndpoints.orderComplete,
     ),
-    orderStartProcessing: normalizePath(
+    orderStartProcessing: normalizeLiveCalendarEndpoint(
       fromConfig.orderStartProcessing || defaultEndpoints.orderStartProcessing,
     ),
-    getCalendarEvents: normalizePath(
+    getCalendarEvents: normalizeLiveCalendarEndpoint(
       fromConfig.getCalendarEvents || defaultEndpoints.getCalendarEvents,
     ),
     equipmentAdd: normalizePath(
@@ -189,6 +213,14 @@ export const getApiEndpoints = () => {
     accountAdminDeactivateUser: normalizePath(
       fromConfig.accountAdminDeactivateUser ||
         defaultEndpoints.accountAdminDeactivateUser,
+    ),
+    orderAssignTechnician: normalizePath(
+      fromConfig.orderAssignTechnician ||
+        defaultEndpoints.orderAssignTechnician,
+    ),
+    orderAssignEquipment: normalizePath(
+      fromConfig.orderAssignEquipment ||
+        defaultEndpoints.orderAssignEquipment,
     ),
   };
 };

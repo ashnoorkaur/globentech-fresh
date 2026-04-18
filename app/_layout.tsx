@@ -50,6 +50,7 @@ export default function RootLayout() {
         <Stack.Screen name="admin-users" options={{ headerShown: false }} />
         <Stack.Screen name="admin-equipment" options={{ headerShown: false }} />
         <Stack.Screen name="admin-reports" options={{ headerShown: false }} />
+        <Stack.Screen name="admin-queries" options={{ headerShown: false }} />
         <Stack.Screen
           name="customer-dashboard"
           options={{ headerShown: false }}
@@ -64,6 +65,10 @@ export default function RootLayout() {
         />
         <Stack.Screen
           name="customer-contact"
+          options={{ headerShown: false }}
+        />
+        <Stack.Screen
+          name="customer-checkout"
           options={{ headerShown: false }}
         />
         <Stack.Screen

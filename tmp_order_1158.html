@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <base href="/">
+<script>window.__APP_BASE__ = "";</script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - GlobenTech</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header class="main-header">
+    <div class="header-content">
+        <div class="logo">
+            <a href="/dashboard/index.php">GlobenTech</a>
+        </div>
+
+        <nav class="main-nav">
+                                                <a href="/dashboard/index.php" class="">Dashboard</a>
+                    <a href="/admin/approvals.php" class="">Approvals</a>
+                    <a href="/calendar/index.php" class="">Calendar</a>
+                    <a href="/orders/order-history.php" class="">Order History</a>
+                    <a href="/admin/users.php" class="">Users</a>
+                    <a href="/admin/equipment.php" class="">Equipment</a>
+                    <a href="/admin/reports.php" class="">Reports</a>
+                                    </nav>
+
+        <div class="user-menu">
+                                                <span class="user-name">System Administrator</span>
+                                <a href="/account/settings.php" class="btn btn-small btn-account " style="margin-right:8px;">Account</a>
+                <a href="/auth/logout.php" class="btn btn-small">Logout</a>
+                    </div>
+    </div>
+</header>
+
+<!-- ================= CHATBOT START ================= -->
+
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+<div id="chatbot-button">
+    <span class="material-icons">chat</span>
+</div>
+
+<div id="chatbot-window">
+    <div id="chatbot-header">
+        <span>Virtual Assistant</span>
+        <span id="chatbot-close">&times;</span>
+    </div>
+
+    <div id="chatbot-messages">
+        <div id="quick-questions">
+            <div class="question">How do I approve orders?</div>
+            <div class="question">Where can I manage users?</div>
+            <div class="question">How do I manage equipment?</div>
+            <div class="question">Where can I view reports?</div>
+            <div class="question">How do I logout?</div>
+        </div>
+    </div>
+
+    <div id="chatbot-input-area">
+        <input type="text" id="chatbot-input" placeholder="Ask me something...">
+        <button id="chatbot-send">Send</button>
+    </div>
+</div>
+
+<link rel="stylesheet" href="/css/chat.css">
+<script>
+    window.__CHATBOT_AI_URL__ = "\/ai_reply.php";
+</script>
+<script type="module" src="/frontend/src/components/chatbot/chatbotWidget.js"></script>
+
+<!-- ================= CHATBOT END ================= -->
+
+    <div class="dashboard-container">
+        <div class="welcome-section">
+            <h1>Welcome, System Administrator!</h1>
+            <p class="role-badge role-administrator">
+                Administrator            </p>
+        </div>
+
+                                <div class="dashboard-grid">
+                <div class="dashboard-card">
+                    <h2>Pending Approvals</h2>
+                    <p>Orders waiting for approval</p>
+                    <div class="card-stats">
+                        <span class="stat">2 Pending</span>
+                    </div>
+                    <a href="/admin/approvals.php" class="btn btn-primary">Review Orders</a>
+                </div>
+
+                <div class="dashboard-card">
+                    <h2>User Management</h2>
+                    <p>Manage user accounts and permissions</p>
+                    <a href="/admin/users.php" class="btn btn-primary">Manage Users</a>
+                </div>
+
+                <div class="dashboard-card">
+                    <h2>Equipment Management</h2>
+                    <p>Configure equipment settings and schedules</p>
+                    <a href="/admin/equipment.php" class="btn btn-primary">Manage Equipment</a>
+                </div>
+
+                <div class="dashboard-card">
+                    <h2>Order Catalogue</h2>
+                    <p>Create and manage order types for customers</p>
+                    <a href="/admin/catalogue.php" class="btn btn-primary">Manage Catalogue</a>
+                </div>
+
+                <div class="dashboard-card">
+                    <h2>Reports & Analytics</h2>
+                    <p>View system statistics and performance</p>
+                    <a href="/admin/reports.php" class="btn btn-primary">View Reports</a>
+                </div>
+
+                <div class="dashboard-card full-width">
+                    <h2>Pending Orders</h2>
+                    <div class="activity-list">
+                                                    <table class="dashboard-table">
+                                <thead>
+                                    <tr>
+                                        <th>Order #</th>
+                                        <th>Customer</th>
+                                        <th>Company</th>
+                                        <th>Submitted</th>
+                                        <th>Priority</th>
+                                        <th>Samples</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                                                        <tr>
+                                        <td>ORD-20260417-7803</td>
+                                        <td>Test Customer</td>
+                                        <td>Test Company Inc.</td>
+                                        <td>2026-04-17 01:41</td>
+                                        <td>
+                                            <span class="priority-badge priority-priority">
+                                                Priority                                            </span>
+                                        </td>
+                                        <td>1</td>
+                                    </tr>
+                                                                        <tr>
+                                        <td>ORD-20260418-5530</td>
+                                        <td>Test Customer</td>
+                                        <td>Test Company Inc.</td>
+                                        <td>2026-04-18 12:36</td>
+                                        <td>
+                                            <span class="priority-badge priority-standard">
+                                                Standard                                            </span>
+                                        </td>
+                                        <td>1</td>
+                                    </tr>
+                                                                    </tbody>
+                            </table>
+                            <div style="margin-top: 15px;">
+                                <a href="/admin/approvals.php" class="btn btn-primary">Go to Approvals</a>
+                            </div>
+                                            </div>
+                </div>
+            </div>
+        
+        <div class="dashboard-card system-info">
+            <h3>System Information</h3>
+            <p><strong>Project:</strong> GlobenTech Lab System</p>
+            <p><strong>Status:</strong> Completed</p>
+            <p><strong>Note:</strong> This is a school project prototype demonstrating core functionality.</p>
+        </div>
+    </div>
+
+ <footer class="main-footer">
+    <div class="footer-content">
+        <div class="footer-section">
+            <h3>GlobenTech</h3>
+            <p>Laboratory Order Management System</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Project Information</h4>
+            <p>Course: Capstone Project</p>
+            <p>Final Project</p>
+            <p>SAIT - 2026</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Client</h4>
+            <p>GMJ Global Energy</p>
+            <p>Astra Agus Pramana</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Team Members</h4>
+            <p>Bhavya Bhavya, Evan Di Placido,</p>
+            <p>Ahmad Fakhry, Gaganpreet Kaur,</p>
+            <p>Ashnoor Kaur, Justice Mazerolle, Ravneet Kaur</p>
+        </div>
+    </div>
+
+    <div class="footer-bottom">
+        <p>&copy; 2026 GlobenTech. School Project - All rights reserved.</p>
+    </div>
+</footer>
+
+
+
+<script type="module" src="frontend/src/pages/dashboard/dashboard.js"></script>
+</body>
+</html>
+

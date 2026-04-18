@@ -1,167 +1,404 @@
-import { Ionicons } from "@expo/vector-icons";
+﻿import { router } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { technicianMenu } from "../constants/role-menus";
+import { useConfirmModal } from "../hooks/use-confirm-modal";
+import { useFeedbackModal } from "../hooks/use-feedback-modal";
 import { useFocusedPolling } from "../hooks/use-focused-polling";
 import {
     hasCachedScreenState,
     useCachedScreenState,
 } from "../hooks/use-screen-cache";
-import { fetchTechnicianWorkQueue, type QueueEntry } from "../lib/calendar-api";
-import { normalizeOrderStatusForCompare } from "../lib/order-status-normalize";
-import { statusLabel, toLifecycleStatus } from "../lib/order-workflow";
+import {
+    approveOrder,
+    fetchAdminOrderHistory,
+    fetchPendingOrders,
+    rejectOrder,
+    type PendingOrderDto,
+} from "../lib/admin-api";
+import {
+    fetchTechnicianWorkQueue,
+    startQueueProcessing,
+    type QueueEntry,
+} from "../lib/calendar-api";
+import { backendDateTimeValue, formatBackendDateTime } from "../lib/date-time";
+import { normalizeOrderPriorityValue, toLifecycleStatus } from "../lib/order-workflow";
 import { useAppTheme } from "../lib/theme";
 
-type StatusFilter = "all" | "pending" | "approved" | "processing" | "completed";
-type PriorityFilter = "all" | "standard" | "high";
+const formatDate = (value?: string | null) =>
+  formatBackendDateTime(value, "--");
 
-const normalizeStatus = (value?: string): Exclude<StatusFilter, "all"> => {
-  const normalized = normalizeOrderStatusForCompare(value);
-  if (normalized === "completed") {
-    return "completed";
-  }
-  if (normalized === "processing") {
-    return "processing";
-  }
-  if (normalized === "approved") {
-    return "approved";
-  }
-  return "pending";
+const hasMeaningfulText = (value?: string | null) => {
+  const trimmed = (value || "").trim();
+  return Boolean(
+    trimmed &&
+      !/^(?:-|_|customer|customer name|company|not provided|unknown)$/i.test(
+        trimmed,
+      ),
+  );
 };
 
-const formatText = (value?: string | null, fallback = "Pending sync") => {
-  const trimmed = value?.trim();
-  return trimmed ? trimmed : fallback;
-};
-
-const formatSampleSummary = (entry: QueueEntry) => {
-  const sample = entry.sample_type?.trim();
-  const samples = entry.sample_types.filter(Boolean);
-  if (sample) return sample;
-  if (samples.length > 0) return samples.join(", ");
-  return "Sample details pending sync";
-};
-
-const formatCustomerCompany = (entry: QueueEntry) => {
-  const customer = entry.customer_name?.trim();
-  const company = entry.company_name?.trim();
-  if (customer && company) return `Customer: ${customer} | Company: ${company}`;
-  if (customer) return `Customer: ${customer}`;
-  if (company) return `Company: ${company}`;
-  return "Customer details pending sync";
-};
-
-const formatSampleCompound = (entry: QueueEntry) => {
-  const sample = formatSampleSummary(entry);
-  const compound = entry.compound_name?.trim();
-  return compound ? `Sample: ${sample} | Compound: ${compound}` : `Sample: ${sample}`;
-};
-
-const formatQuantity = (entry: QueueEntry) => {
-  if (entry.quantity !== undefined && entry.quantity !== null) {
-    return `Quantity: ${entry.quantity} ${entry.unit || ""}`.trim();
+const resolveText = (
+  values: (string | null | undefined)[],
+  fallback = "Not available",
+) => {
+  for (const value of values) {
+    if (hasMeaningfulText(value)) {
+      return value!.trim();
+    }
   }
-  return "Quantity pending sync";
+  return fallback;
 };
 
-const technicianDecisionText = (status?: string) => {
-  const lifecycle = toLifecycleStatus(status);
-  if (lifecycle === "completed" || lifecycle === "results_available") {
-    return "Admin accepted this order and technician processing is completed.";
-  }
-  if (lifecycle === "testing" || lifecycle === "preparation") {
-    return "Admin accepted this order and it is currently under technician processing.";
-  }
-  if (lifecycle === "approved" || lifecycle === "in_queue") {
-    return "Admin accepted this order and assigned it to technician queue.";
-  }
-  return "Awaiting processing transition in technician queue.";
+const formatDisplayCase = (
+  value?: string | null,
+  fallback = "Not available",
+) => {
+  const trimmed = (value || "").trim();
+  if (!trimmed) return fallback;
+  return trimmed.replace(/\b\w/g, (char) => char.toUpperCase());
 };
+
+const formatQuantity = (item: QueueEntry, detail?: PendingOrderDto) => {
+  const quantity = detail?.quantity ?? item.quantity;
+  const unit = detail?.unit ?? item.unit;
+
+  if (typeof quantity === "number" && Number.isFinite(quantity) && quantity > 0) {
+    return `${quantity} ${unit || ""}`.trim();
+  }
+
+  if (typeof detail?.sample_count === "number" && detail.sample_count > 0) {
+    return `${detail.sample_count} sample(s)`;
+  }
+
+  return "Not available";
+};
+
+const isPendingTechnicianApproval = (item: QueueEntry) => {
+  const lifecycle = toLifecycleStatus(item.order_status);
+  return lifecycle === "payment_pending";
+};
+
+const dedupeQueue = (entries: QueueEntry[]) => {
+  const seen = new Set<string>();
+  return entries.filter((entry) => {
+    const key = (entry.order_number || `${entry.order_id || entry.queue_id}`)
+      .trim()
+      .toLowerCase();
+
+    if (!key || seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+};
+
+type ApprovalCard = {
+  item: QueueEntry;
+  detail?: PendingOrderDto;
+};
+
+type TechnicianPendingSort = "newest" | "oldest" | "priority_high" | "priority_standard";
+
+const sortPendingOrdersList = (
+  rows: PendingOrderDto[],
+  mode: TechnicianPendingSort,
+): PendingOrderDto[] => {
+  const next = [...rows];
+  next.sort((a, b) => {
+    if (mode === "priority_high") {
+      const ah = normalizeOrderPriorityValue(a.priority) === "high" ? 1 : 0;
+      const bh = normalizeOrderPriorityValue(b.priority) === "high" ? 1 : 0;
+      if (ah !== bh) return bh - ah;
+    } else if (mode === "priority_standard") {
+      const ah = normalizeOrderPriorityValue(a.priority) === "high" ? 1 : 0;
+      const bh = normalizeOrderPriorityValue(b.priority) === "high" ? 1 : 0;
+      if (ah !== bh) return ah - bh;
+    }
+    const at = backendDateTimeValue(a.created_at);
+    const bt = backendDateTimeValue(b.created_at);
+    if (mode === "oldest") return at - bt;
+    return bt - at;
+  });
+  return next;
+};
+
+const sortQueuePendingItems = (
+  items: QueueEntry[],
+  mode: TechnicianPendingSort,
+): QueueEntry[] => {
+  const next = [...items];
+  const time = (q: QueueEntry) =>
+    backendDateTimeValue(q.assigned_at || q.scheduled_start);
+  next.sort((a, b) => {
+    if (mode === "priority_high") {
+      const ah = normalizeOrderPriorityValue(a.priority) === "high" ? 1 : 0;
+      const bh = normalizeOrderPriorityValue(b.priority) === "high" ? 1 : 0;
+      if (ah !== bh) return bh - ah;
+    } else if (mode === "priority_standard") {
+      const ah = normalizeOrderPriorityValue(a.priority) === "high" ? 1 : 0;
+      const bh = normalizeOrderPriorityValue(b.priority) === "high" ? 1 : 0;
+      if (ah !== bh) return ah - bh;
+    }
+    const at = time(a);
+    const bt = time(b);
+    if (mode === "oldest") {
+      if (at !== bt) return at - bt;
+      return a.position - b.position;
+    }
+    if (bt !== at) return bt - at;
+    return a.position - b.position;
+  });
+  return next;
+};
+
+const SHARED_PENDING_COUNT_KEY = "technician:pendingCount:v1";
+const SHARED_QUEUE_COUNT_KEY = "technician:queueCount:v1";
+const SHARED_UPDATED_KEY = "technician:lastUpdated:v1";
+
+const toApprovalQueueEntry = (detail: PendingOrderDto): QueueEntry => ({
+  queue_id: -(detail.id || 1),
+  firebase_key: detail.firebase_key,
+  order_id: detail.id,
+  order_number: detail.order_number,
+  order_status: detail.status || "submitted",
+  priority: normalizeOrderPriorityValue(detail.priority),
+  customer_name: detail.customer_name,
+  company_name: detail.company_name,
+  sample_type: detail.sample_type,
+  compound_name: detail.compound_name,
+  quantity: detail.quantity,
+  unit: detail.unit,
+  notes: detail.notes,
+  assigned_at: detail.assigned_at || detail.created_at,
+  assigned_technician_uid: detail.assigned_technician_uid,
+  assigned_technician_name: detail.assigned_technician_name,
+  assigned_technician_email: detail.assigned_technician_email,
+  technician_status_action: detail.technician_status_action,
+  technician_status_note: detail.technician_status_note,
+  technician_status_updated_at: detail.technician_status_updated_at,
+  technician_status_updated_by: detail.technician_status_updated_by,
+  sample_types: detail.sample_type ? [detail.sample_type] : [],
+  equipment_id: detail.equipment_id ?? null,
+  equipment_name: detail.equipment_name ?? null,
+  scheduled_start: detail.scheduled_start ?? null,
+  scheduled_end: detail.scheduled_end ?? null,
+  estimated_completion: detail.estimated_completion ?? null,
+  position: 0,
+  queue_type: "pending_approval",
+});
 
 export default function TechnicianTasksPage() {
   const theme = useAppTheme();
+  const feedback = useFeedbackModal();
+  const confirm = useConfirmModal();
   const [queue, setQueue] = useCachedScreenState<QueueEntry[]>(
-    "technician-tasks:queue",
+    "technician-tasks:queue:v7",
     [],
   );
+  const [details, setDetails] = useCachedScreenState<PendingOrderDto[]>(
+    "technician-tasks:details:v9",
+    [],
+  );
+  const [pendingOrders, setPendingOrders] = useCachedScreenState<PendingOrderDto[]>(
+    "technician-tasks:pendingOrders:v10",
+    [],
+  );
+  const [, setWebsitePendingCount] = useCachedScreenState(
+    SHARED_PENDING_COUNT_KEY,
+    0,
+  );
+  const [websiteQueueCount, setWebsiteQueueCount] = useCachedScreenState(
+    SHARED_QUEUE_COUNT_KEY,
+    0,
+  );
   const [loading, setLoading] = useState(
-    () => !hasCachedScreenState("technician-tasks:queue"),
+    () => !hasCachedScreenState("technician-tasks:queue:v7"),
   );
   const [lastUpdated, setLastUpdated] = useCachedScreenState(
-    "technician-tasks:lastUpdated",
+    SHARED_UPDATED_KEY,
     "",
   );
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
-  const [priorityFilter, setPriorityFilter] = useState<PriorityFilter>("all");
-  const [draftStatus, setDraftStatus] = useState<StatusFilter>("all");
-  const [draftPriority, setDraftPriority] = useState<PriorityFilter>("all");
-  const [statusOpen, setStatusOpen] = useState(false);
-  const [priorityOpen, setPriorityOpen] = useState(false);
+  const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
+  const [sortMode, setSortMode] = useState<TechnicianPendingSort>("newest");
 
   const loadTasks = useCallback(async () => {
     if (queue.length === 0) {
       setLoading(true);
     }
+
     try {
-      const data = await fetchTechnicianWorkQueue();
-      setQueue(data.queue ?? []);
+      const [queueData, pendingData, historyData] = await Promise.all([
+        fetchTechnicianWorkQueue(),
+        fetchPendingOrders().catch(() => [] as PendingOrderDto[]),
+        fetchAdminOrderHistory().catch(() => [] as PendingOrderDto[]),
+      ]);
+
+      const mergedDetails = [...pendingData, ...historyData];
+
+      setQueue(dedupeQueue(queueData.queue ?? []));
+      setPendingOrders(pendingData);
+      setDetails(mergedDetails);
+      const uniqueQueue = dedupeQueue(queueData.queue ?? []);
+      const pendingQueue = uniqueQueue.filter((item) => isPendingTechnicianApproval(item));
+      const livePendingCount =
+        typeof queueData.dashboardPendingCount === "number" && queueData.dashboardPendingCount > 0
+          ? queueData.dashboardPendingCount
+          : undefined;
+
+      setWebsitePendingCount(
+        pendingData.length > 0
+          ? pendingData.length
+          : (livePendingCount ?? pendingQueue.length),
+      );
+      setWebsiteQueueCount(
+        typeof queueData.dashboardQueueCount === "number" && queueData.dashboardQueueCount > 0
+          ? queueData.dashboardQueueCount
+          : uniqueQueue.length,
+      );
       setLastUpdated(new Date().toLocaleTimeString());
     } catch {
       // Keep the last successful snapshot visible.
     } finally {
       setLoading(false);
     }
-  }, [queue.length, setLastUpdated, setQueue]);
+  }, [queue.length, setDetails, setLastUpdated, setPendingOrders, setQueue, setWebsitePendingCount, setWebsiteQueueCount]);
 
   useFocusedPolling(loadTasks, { intervalMs: 12000 });
 
-  const stats = useMemo(() => {
-    const completed = queue.filter(
-      (q) => normalizeStatus(q.order_status) === "completed",
-    ).length;
-    const active = queue.length - completed;
-    const high = queue.filter(
-      (q) => (q.priority || "").toLowerCase() === "high",
-    ).length;
-    return { active, high, completed };
-  }, [queue]);
-
-  const filteredQueue = useMemo(() => {
-    return queue.filter((item) => {
-      const normalizedStatus = normalizeStatus(item.order_status);
-      const statusPass =
-        statusFilter === "all" || normalizedStatus === statusFilter;
-      const normalizedPriority: PriorityFilter =
-        (item.priority || "").toLowerCase() === "high" ? "high" : "standard";
-      const priorityPass =
-        priorityFilter === "all" || normalizedPriority === priorityFilter;
-      return statusPass && priorityPass;
+  const detailByOrder = useMemo(() => {
+    const byOrder = new Map<string, PendingOrderDto>();
+    details.forEach((detail) => {
+      const key = (detail.order_number || "").trim().toLowerCase();
+      if (key && !byOrder.has(key)) {
+        byOrder.set(key, detail);
+      }
     });
-  }, [priorityFilter, queue, statusFilter]);
+    return byOrder;
+  }, [details]);
 
-  const assignedTasks = useMemo(
+  const pendingApprovals = useMemo<ApprovalCard[]>(() => {
+    const maxCards = 100;
+
+    if (pendingOrders.length > 0) {
+      const sorted = sortPendingOrdersList(pendingOrders, sortMode);
+      return sorted.slice(0, maxCards).map((detail) => {
+        const matchedItem =
+          dedupeQueue(queue).find(
+            (item) =>
+              (item.order_number || "").trim().toLowerCase() ===
+                (detail.order_number || "").trim().toLowerCase() ||
+              item.order_id === detail.id,
+          ) || toApprovalQueueEntry(detail);
+
+        return { item: matchedItem, detail };
+      });
+    }
+
+    const pendingQueue = sortQueuePendingItems(
+      dedupeQueue(queue).filter((item) => isPendingTechnicianApproval(item)),
+      sortMode,
+    );
+
+    return pendingQueue.slice(0, maxCards).map((item) => ({
+      item,
+      detail:
+        detailByOrder.get((item.order_number || "").trim().toLowerCase()) ||
+        details.find((detail) => detail.id === item.order_id),
+    }));
+  }, [detailByOrder, details, pendingOrders, queue, sortMode]);
+
+  const queuedCount = useMemo(
     () =>
-      filteredQueue.filter(
-        (item) => normalizeStatus(item.order_status) !== "completed",
-      ),
-    [filteredQueue],
+      websiteQueueCount > 0
+        ? websiteQueueCount
+        : dedupeQueue(queue).filter((item) => {
+            const lifecycle = toLifecycleStatus(item.order_status);
+            return (
+              lifecycle === "in_queue" ||
+              lifecycle === "testing" ||
+              lifecycle === "preparation"
+            );
+          }).length,
+    [queue, websiteQueueCount],
   );
 
-  const completedTasks = useMemo(
-    () =>
-      filteredQueue.filter(
-        (item) => normalizeStatus(item.order_status) === "completed",
-      ),
-    [filteredQueue],
-  );
+  const handleApprove = async (card: ApprovalCard) => {
+    const { item, detail } = card;
+    setBusyOrderId(item.order_id);
+
+    try {
+      try {
+        await startQueueProcessing(item.order_id, item.queue_id, item.order_number, {
+          note: "Technician approved this order for laboratory processing.",
+        });
+      } catch (error) {
+        if (detail) {
+          await approveOrder(detail);
+        } else {
+          throw error;
+        }
+      }
+
+      await loadTasks();
+      feedback.showSuccess(
+        "Order Approved",
+        `${item.order_number} moved forward in the technician workflow.`,
+      );
+      router.push("/technician-calendar");
+    } catch (error) {
+      feedback.showError(
+        "Approval Failed",
+        error instanceof Error ? error.message : "Unable to approve this order.",
+      );
+    } finally {
+      setBusyOrderId(null);
+    }
+  };
+
+  const handleReject = async (card: ApprovalCard) => {
+    const { item, detail } = card;
+    setBusyOrderId(item.order_id);
+
+    try {
+      await rejectOrder(
+        detail || {
+          id: item.order_id,
+          firebase_key: item.firebase_key,
+          order_number: item.order_number,
+          customer_name: resolveText([item.customer_name], "Customer"),
+          created_at:
+            item.assigned_at || item.scheduled_start || new Date().toISOString(),
+          priority: normalizeOrderPriorityValue(item.priority),
+          sample_count: item.sample_types?.length || 0,
+        },
+        "Rejected by technician after review.",
+      );
+
+      await loadTasks();
+      feedback.showSuccess(
+        "Order Rejected",
+        `${item.order_number} was rejected successfully.`,
+      );
+    } catch (error) {
+      feedback.showError(
+        "Rejection Failed",
+        error instanceof Error ? error.message : "Unable to reject this order.",
+      );
+    } finally {
+      setBusyOrderId(null);
+    }
+  };
 
   return (
     <RoleContentPage
-      title="Assigned Tasks"
-      subtitle="Live technician queue synchronized with admin assignment and calendar scheduling."
+      title="Pending Approvals"
+      subtitle=""
       role="Technician"
-      activeKey="tasks"
+      activeKey="approvals"
       menuItems={technicianMenu}
       dashboardRoute="/technician-dashboard"
     >
@@ -175,401 +412,281 @@ export default function TechnicianTasksPage() {
         ]}
       >
         <View style={styles.topRow}>
-          <Text style={[styles.updatedText, { color: theme.colors.textMuted }]}>
-            Updated {lastUpdated || "--"}
-          </Text>
+          <Text style={[styles.updatedText, { color: theme.colors.textMuted }]}>Updated {lastUpdated || (loading ? "Loading..." : "--")}</Text>
           <Pressable
             onPress={loadTasks}
-            style={[
-              styles.refreshBtn,
-              { backgroundColor: theme.colors.primary },
-            ]}
+            style={[styles.refreshBtn, { backgroundColor: theme.colors.primary }]}
           >
-            <Text style={styles.refreshBtnText}>
-              {loading ? "Syncing..." : "Refresh"}
-            </Text>
+            <Text style={styles.refreshBtnText}>{loading ? "Refreshing..." : "Refresh"}</Text>
           </Pressable>
         </View>
 
-        <View style={styles.statsRow}>
+        <View style={styles.summaryRow}>
           <View
             style={[
-              styles.stat,
+              styles.summaryCard,
               {
                 borderColor: theme.colors.border,
                 backgroundColor: theme.colors.surfaceMuted,
               },
             ]}
           >
-            <Text style={[styles.statLabel, { color: theme.colors.textMuted }]}>
-              Active
-            </Text>
-            <Text style={[styles.statValue, { color: theme.colors.primary }]}>
-              {stats.active}
-            </Text>
+            <Text style={[styles.summaryLabel, { color: theme.colors.textMuted }]}>Pending</Text>
+            <Text style={[styles.summaryValue, { color: theme.colors.primary }]}>{pendingApprovals.length}</Text>
           </View>
           <View
             style={[
-              styles.stat,
+              styles.summaryCard,
               {
                 borderColor: theme.colors.border,
                 backgroundColor: theme.colors.surfaceMuted,
               },
             ]}
           >
-            <Text style={[styles.statLabel, { color: theme.colors.textMuted }]}>
-              High Priority
-            </Text>
-            <Text style={[styles.statValue, { color: theme.colors.danger }]}>
-              {stats.high}
-            </Text>
-          </View>
-          <View
-            style={[
-              styles.stat,
-              {
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.surfaceMuted,
-              },
-            ]}
-          >
-            <Text style={[styles.statLabel, { color: theme.colors.textMuted }]}>
-              Completed
-            </Text>
-            <Text style={[styles.statValue, { color: theme.colors.success }]}>
-              {stats.completed}
-            </Text>
+            <Text style={[styles.summaryLabel, { color: theme.colors.textMuted }]}>In Queue</Text>
+            <Text style={[styles.summaryValue, { color: theme.colors.secondary }]}>{queuedCount}</Text>
           </View>
         </View>
 
-        <View style={styles.selectorsRow}>
-          <View style={styles.selectorWrap}>
-            <Pressable
-              onPress={() => {
-                setStatusOpen((v) => !v);
-                setPriorityOpen(false);
-              }}
-              style={[
-                styles.selectorBtn,
-                {
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.surfaceMuted,
-                },
-              ]}
-            >
-              <View style={styles.selectorInner}>
-                <Text
-                  style={[styles.selectorText, { color: theme.colors.text }]}
-                >
-                  Status: {draftStatus.toUpperCase()}
-                </Text>
-                <Ionicons
-                  name={statusOpen ? "chevron-up" : "chevron-down"}
-                  size={14}
-                  color={theme.colors.textMuted}
-                />
-              </View>
-            </Pressable>
-            {statusOpen ? (
-              <View
+        <View style={styles.sortRow}>
+          {(
+            [
+              ["newest", "Newest"],
+              ["oldest", "Oldest"],
+              ["priority_high", "High first"],
+              ["priority_standard", "Standard first"],
+            ] as const
+          ).map(([value, label]) => {
+            const active = sortMode === value;
+            return (
+              <Pressable
+                key={value}
+                onPress={() => setSortMode(value)}
                 style={[
-                  styles.dropdown,
+                  styles.sortChip,
                   {
-                    borderColor: theme.colors.border,
-                    backgroundColor: theme.colors.surface,
+                    borderColor: active ? theme.colors.primary : theme.colors.border,
+                    backgroundColor: active ? theme.colors.primarySoft : theme.colors.surfaceMuted,
                   },
                 ]}
               >
-                {(
-                  [
-                    "all",
-                    "pending",
-                    "approved",
-                    "processing",
-                    "completed",
-                  ] as StatusFilter[]
-                ).map((value) => (
-                  <Pressable
-                    key={value}
-                    onPress={() => {
-                      setDraftStatus(value);
-                      setStatusOpen(false);
-                    }}
-                    style={[
-                      styles.dropdownItem,
-                      {
-                        backgroundColor:
-                          draftStatus === value
-                            ? theme.colors.primarySoft
-                            : "transparent",
-                      },
-                    ]}
-                  >
-                    <Text
-                      style={[
-                        styles.dropdownItemText,
-                        { color: theme.colors.text },
-                      ]}
-                    >
-                      {value.toUpperCase()}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
-            ) : null}
-          </View>
-
-          <View style={styles.selectorWrap}>
-            <Pressable
-              onPress={() => {
-                setPriorityOpen((v) => !v);
-                setStatusOpen(false);
-              }}
-              style={[
-                styles.selectorBtn,
-                {
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.surfaceMuted,
-                },
-              ]}
-            >
-              <View style={styles.selectorInner}>
                 <Text
-                  style={[styles.selectorText, { color: theme.colors.text }]}
+                  style={[
+                    styles.sortChipText,
+                    { color: active ? theme.colors.primary : theme.colors.textMuted },
+                  ]}
                 >
-                  Priority: {draftPriority.toUpperCase()}
+                  {label}
                 </Text>
-                <Ionicons
-                  name={priorityOpen ? "chevron-up" : "chevron-down"}
-                  size={14}
-                  color={theme.colors.textMuted}
-                />
-              </View>
-            </Pressable>
-            {priorityOpen ? (
-              <View
-                style={[
-                  styles.dropdown,
-                  {
-                    borderColor: theme.colors.border,
-                    backgroundColor: theme.colors.surface,
-                  },
-                ]}
-              >
-                {(["all", "standard", "high"] as PriorityFilter[]).map(
-                  (value) => (
-                    <Pressable
-                      key={value}
-                      onPress={() => {
-                        setDraftPriority(value);
-                        setPriorityOpen(false);
-                      }}
-                      style={[
-                        styles.dropdownItem,
-                        {
-                          backgroundColor:
-                            draftPriority === value
-                              ? theme.colors.primarySoft
-                              : "transparent",
-                        },
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.dropdownItemText,
-                          { color: theme.colors.text },
-                        ]}
-                      >
-                        Priority: {value.toUpperCase()}
-                      </Text>
-                    </Pressable>
-                  ),
-                )}
-              </View>
-            ) : null}
-          </View>
+              </Pressable>
+            );
+          })}
         </View>
 
-        <Pressable
-          onPress={() => {
-            setStatusFilter(draftStatus);
-            setPriorityFilter(draftPriority);
-            setStatusOpen(false);
-            setPriorityOpen(false);
-          }}
-          style={[styles.applyBtn, { backgroundColor: theme.colors.secondary }]}
-        >
-          <Text style={styles.applyBtnText}>Filter</Text>
-        </Pressable>
-
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            Assigned Tasks ({assignedTasks.length})
-          </Text>
-        </View>
-        {assignedTasks.length === 0 ? (
-          <Text style={[styles.empty, { color: theme.colors.textMuted }]}>
-            No assigned tasks for selected filters.
-          </Text>
+        {pendingApprovals.length === 0 ? (
+          <Text style={[styles.empty, { color: theme.colors.textMuted }]}>No technician approvals are pending right now.</Text>
         ) : (
-          assignedTasks.slice(0, 12).map((item) => {
-            const lifecycle = toLifecycleStatus(item.order_status);
+          pendingApprovals.map((card) => {
+            const { item, detail } = card;
+            const customerName = resolveText([detail?.customer_name, item.customer_name]);
+            const companyName = resolveText([detail?.company_name, item.company_name]);
+            const sampleType = formatDisplayCase(
+              resolveText([
+                detail?.sample_type,
+                item.sample_type,
+                item.sample_types?.join(", "),
+              ]),
+            );
+            const compoundName = formatDisplayCase(detail?.compound_name, "Not available");
+            const submittedAt = formatDate(
+              detail?.created_at || item.assigned_at || item.scheduled_start,
+            );
+            const priorityLabel = resolveText([detail?.priority, item.priority], "standard");
+            const priorityNorm = normalizeOrderPriorityValue(priorityLabel);
+            const isHighPriority = priorityNorm === "high";
+            const priorityTitle = isHighPriority ? "HIGH" : "STANDARD";
+
             return (
               <View
-                key={item.queue_id}
+                key={`${item.queue_id}-${item.order_number}`}
                 style={[
-                  styles.row,
+                  styles.orderCard,
                   {
                     borderColor: theme.colors.border,
                     backgroundColor: theme.colors.surfaceMuted,
                   },
                 ]}
               >
-                <Text style={[styles.title, { color: theme.colors.text }]}>
-                  {item.order_number}
-                </Text>
-                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  {statusLabel(lifecycle)} - Position #{item.position}
-                </Text>
-                <Text style={[styles.subStrong, { color: theme.colors.info }]}>
-                  {technicianDecisionText(item.order_status)}
-                </Text>
-                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  Priority: {(item.priority || "standard").toUpperCase()}
-                </Text>
-                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  {formatCustomerCompany(item)}
-                </Text>
-                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  {formatSampleCompound(item)}
-                </Text>
-                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  {formatQuantity(item)}
-                </Text>
-                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  Order ID: {item.order_id} | Queue ID: {item.queue_id}
-                </Text>
-                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  Samples: {formatText(item.sample_types?.join(", "), "Pending sync")}
-                </Text>
-                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  Equipment: {formatText(item.equipment_name, "Pending assignment")}
-                </Text>
-                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  Start: {item.scheduled_start || "Not scheduled"}
-                </Text>
-                <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                  ETA:{" "}
-                  {item.estimated_completion || item.scheduled_end || "Pending"}
-                </Text>
-                {item.notes ? (
-                  <Text style={[styles.subStrong, { color: theme.colors.text }]}>Notes: {item.notes}</Text>
+                <View style={styles.orderHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[styles.orderNumber, { color: theme.colors.text }]}>{item.order_number}</Text>
+                    <Text style={[styles.orderStatus, { color: theme.colors.success }]}>Live technician approval • ready for review</Text>
+                  </View>
+                  <View
+                    style={[
+                      styles.priorityBadge,
+                      {
+                        backgroundColor: isHighPriority
+                          ? theme.colors.warning + "22"
+                          : theme.colors.border + "66",
+                      },
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.priorityText,
+                        {
+                          color: isHighPriority
+                            ? theme.colors.warning
+                            : theme.colors.textMuted,
+                        },
+                      ]}
+                    >
+                      {priorityTitle}
+                    </Text>
+                  </View>
+                </View>
+
+                <View style={styles.detailsGrid}>
+                  <View style={styles.detailItem}>
+                    <Text style={[styles.detailLabel, { color: theme.colors.textMuted }]}>Customer</Text>
+                    <Text style={[styles.detailValue, { color: theme.colors.text }]}>{customerName}</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={[styles.detailLabel, { color: theme.colors.textMuted }]}>Company</Text>
+                    <Text style={[styles.detailValue, { color: theme.colors.text }]}>{companyName}</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={[styles.detailLabel, { color: theme.colors.textMuted }]}>Sample Type</Text>
+                    <Text style={[styles.detailValue, { color: theme.colors.text }]}>{sampleType}</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={[styles.detailLabel, { color: theme.colors.textMuted }]}>Compound</Text>
+                    <Text style={[styles.detailValue, { color: theme.colors.text }]}>{compoundName}</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={[styles.detailLabel, { color: theme.colors.textMuted }]}>Quantity</Text>
+                    <Text style={[styles.detailValue, { color: theme.colors.text }]}>{formatQuantity(item, detail)}</Text>
+                  </View>
+                  <View style={styles.detailItem}>
+                    <Text style={[styles.detailLabel, { color: theme.colors.textMuted }]}>Submitted</Text>
+                    <Text style={[styles.detailValue, { color: theme.colors.text }]}>{submittedAt}</Text>
+                  </View>
+                </View>
+
+                {detail?.notes ? (
+                  <Text style={[styles.equipmentText, { color: theme.colors.textMuted }]}>Notes: {detail.notes}</Text>
                 ) : null}
+
+                <View style={styles.actionsRow}>
+                  <Pressable
+                    onPress={() =>
+                      confirm.openConfirm({
+                        title: "Approve Order",
+                        message: `Approve ${item.order_number} for technician processing?`,
+                        confirmText: "Approve",
+                        onConfirm: () => handleApprove(card),
+                      })
+                    }
+                    disabled={busyOrderId === item.order_id}
+                    style={[
+                      styles.primaryBtn,
+                      {
+                        backgroundColor:
+                          busyOrderId === item.order_id ? theme.colors.border : theme.colors.primary,
+                      },
+                    ]}
+                  >
+                    <Text style={styles.primaryBtnText}>{busyOrderId === item.order_id ? "Working..." : "Approve"}</Text>
+                  </Pressable>
+                  <Pressable
+                    onPress={() =>
+                      confirm.openConfirm({
+                        title: "Reject Order",
+                        message: `Reject ${item.order_number}?`,
+                        confirmText: "Reject",
+                        onConfirm: () => handleReject(card),
+                      })
+                    }
+                    disabled={busyOrderId === item.order_id}
+                    style={[
+                      styles.rejectBtn,
+                      {
+                        backgroundColor:
+                          busyOrderId === item.order_id ? theme.colors.border : theme.colors.danger,
+                      },
+                    ]}
+                  >
+                    <Text style={styles.primaryBtnText}>Reject</Text>
+                  </Pressable>
+                </View>
               </View>
             );
           })
         )}
-
-        <View style={styles.sectionHeader}>
-          <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-            Completed Tasks ({completedTasks.length})
-          </Text>
-        </View>
-        {completedTasks.length === 0 ? (
-          <Text style={[styles.empty, { color: theme.colors.textMuted }]}>
-            No completed tasks for selected filters.
-          </Text>
-        ) : (
-          completedTasks.slice(0, 12).map((item) => (
-            <View
-              key={`completed-${item.queue_id}`}
-              style={[
-                styles.row,
-                {
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.surfaceMuted,
-                },
-              ]}
-            >
-              <Text style={[styles.title, { color: theme.colors.text }]}>
-                {item.order_number}
-              </Text>
-              <Text style={[styles.sub, { color: theme.colors.success }]}>
-                COMPLETED
-              </Text>
-              <Text style={[styles.subStrong, { color: theme.colors.success }]}>
-                {technicianDecisionText(item.order_status)}
-              </Text>
-              <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                Order ID: {item.order_id} | Queue ID: {item.queue_id}
-              </Text>
-              <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                {formatCustomerCompany(item)}
-              </Text>
-              <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                {formatSampleCompound(item)}
-              </Text>
-              <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                Samples: {formatText(item.sample_types?.join(", "), "Pending sync")}
-              </Text>
-              <Text style={[styles.sub, { color: theme.colors.textMuted }]}>
-                Finished:{" "}
-                {item.scheduled_end || item.estimated_completion || "Pending sync"}
-              </Text>
-              {item.notes ? (
-                <Text style={[styles.subStrong, { color: theme.colors.text }]}>Notes: {item.notes}</Text>
-              ) : null}
-            </View>
-          ))
-        )}
       </View>
+      {feedback.modal}
+      {confirm.modal}
     </RoleContentPage>
   );
 }
 
 const styles = StyleSheet.create({
-  card: { borderWidth: 1, borderRadius: 20, padding: 16, gap: 10 },
+  card: { borderWidth: 1, borderRadius: 20, padding: 16, gap: 12 },
   topRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
+    gap: 8,
   },
   updatedText: { fontSize: 12, fontWeight: "700" },
   refreshBtn: { borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   refreshBtnText: { color: "#fff", fontWeight: "800", fontSize: 12 },
-  statsRow: { flexDirection: "row", gap: 8 },
-  stat: { flex: 1, borderWidth: 1, borderRadius: 12, padding: 10 },
-  statLabel: { fontSize: 11, fontWeight: "700" },
-  statValue: { marginTop: 4, fontSize: 20, fontWeight: "800" },
-  selectorsRow: { flexDirection: "row", gap: 8 },
-  selectorWrap: { flex: 1, zIndex: 3 },
-  selectorBtn: {
+  summaryRow: { flexDirection: "row", gap: 8 },
+  summaryCard: { flex: 1, borderWidth: 1, borderRadius: 12, padding: 10 },
+  summaryLabel: { fontSize: 11, fontWeight: "700" },
+  summaryValue: { fontSize: 22, fontWeight: "800", marginTop: 4 },
+  sortRow: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
+  sortChip: {
     borderWidth: 1,
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 9,
+    borderRadius: 999,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  selectorInner: {
+  sortChipText: { fontSize: 11, fontWeight: "800" },
+  empty: { fontSize: 12, fontWeight: "700" },
+  orderCard: { borderWidth: 1, borderRadius: 16, padding: 12, gap: 10 },
+  orderHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: 8,
+  },
+  orderNumber: { fontSize: 15, fontWeight: "800" },
+  orderStatus: { fontSize: 12, fontWeight: "700", marginTop: 2 },
+  priorityBadge: {
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  priorityText: { fontSize: 10, fontWeight: "800" },
+  detailsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+  detailItem: { width: "47%", gap: 2 },
+  detailLabel: { fontSize: 11, fontWeight: "700" },
+  detailValue: { fontSize: 12, fontWeight: "700" },
+  equipmentText: { fontSize: 12, fontWeight: "700" },
+  actionsRow: { flexDirection: "row", gap: 8, marginTop: 2 },
+  primaryBtn: {
+    flex: 1,
+    borderRadius: 10,
+    paddingVertical: 10,
     alignItems: "center",
   },
-  selectorText: { fontSize: 12, fontWeight: "700" },
-  dropdown: {
-    borderWidth: 1,
+  rejectBtn: {
+    flex: 1,
     borderRadius: 10,
-    marginTop: 4,
-    overflow: "hidden",
+    paddingVertical: 10,
+    alignItems: "center",
   },
-  dropdownItem: { paddingHorizontal: 10, paddingVertical: 8 },
-  dropdownItemText: { fontSize: 12, fontWeight: "700" },
-  applyBtn: { borderRadius: 10, paddingVertical: 9, alignItems: "center" },
-  applyBtnText: { color: "#fff", fontSize: 12, fontWeight: "800" },
-  sectionHeader: { marginTop: 4 },
-  sectionTitle: { fontSize: 15, fontWeight: "800" },
-  empty: { fontSize: 12, fontWeight: "700" },
-  row: { borderWidth: 1, borderRadius: 12, padding: 10, gap: 4 },
-  title: { fontSize: 14, fontWeight: "800" },
-  sub: { fontSize: 12 },
-  subStrong: { fontSize: 12, fontWeight: "700" },
+  primaryBtnText: { color: "#fff", fontSize: 12, fontWeight: "800" },
 });

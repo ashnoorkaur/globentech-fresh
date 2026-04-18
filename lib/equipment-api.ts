@@ -1,11 +1,7 @@
-import { apiRequest } from "./api-client";
+import { apiRequest, getApiBaseUrlCandidates } from "./api-client";
 import { getApiEndpoints } from "./backend-endpoints";
-import {
-    addFirebaseEquipment,
-    fetchFirebaseEquipmentList,
-    updateFirebaseEquipment,
-} from "./firebase-rest";
 import { emitLiveDataRefresh } from "./live-data";
+import { getWebRoutes } from "./web-routes";
 
 export type EquipmentPayload = {
   id?: number;
@@ -46,6 +42,110 @@ const unwrap = <T>(payload: T | SuccessEnvelope<T>): T => {
   return payload as T;
 };
 
+const decodeHtml = (value: string) =>
+  value
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#039;/gi, "'")
+    .replace(/&nbsp;/gi, " ");
+
+const stripTags = (value: string) =>
+  decodeHtml(value.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+
+const toNumber = (value: string, fallback = 0) => {
+  const parsed = Number(value.match(/\d+(?:\.\d+)?/)?.[0] || fallback);
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const fetchLegacyEquipmentHtml = async () => {
+  const candidates = getApiBaseUrlCandidates().slice(0, 2);
+  let lastError: Error | null = null;
+
+  for (const base of candidates) {
+    try {
+      const response = await fetch(`${base}${getWebRoutes().adminEquipment}`, {
+        method: "GET",
+        credentials: "include",
+      });
+      if (response.status === 404) continue;
+      if (!response.ok) {
+        lastError = new Error(`Equipment page failed with status ${response.status}`);
+        continue;
+      }
+      return await response.text();
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError ?? new Error("Shared website equipment page not found.");
+};
+
+const parseLegacyEquipmentRows = (html: string): EquipmentPayload[] => {
+  const rows: EquipmentPayload[] = [];
+
+  for (const match of html.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)) {
+    const rowHtml = match[1];
+    const cells = Array.from(rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi))
+      .map((cell) => stripTags(cell[1]))
+      .filter(Boolean);
+
+    if (cells.length < 6) continue;
+    if (/name|type|processing/i.test(cells[0])) continue;
+
+    const idMatch = rowHtml.match(/data-id=["'](\d+)["']/i) || rowHtml.match(/equipment_id["'][^>]*value=["'](\d+)["']/i);
+    rows.push({
+      id: idMatch ? Number(idMatch[1]) : rows.length + 1,
+      name: cells[0],
+      equipment_type: cells[1] || "General",
+      processing_time_per_sample: toNumber(cells[2]),
+      warmup_time: toNumber(cells[3]),
+      break_interval: toNumber(cells[4]),
+      break_duration: 0,
+      daily_capacity: toNumber(cells[5]),
+      is_available: !/busy|unavailable|offline/i.test(cells[6] || rowHtml),
+      last_maintenance: undefined,
+    });
+  }
+
+  return rows;
+};
+
+const mergeEquipmentRows = (sources: EquipmentPayload[][]): EquipmentPayload[] => {
+  const merged = new Map<string, EquipmentPayload>();
+
+  for (const source of sources) {
+    for (const item of source ?? []) {
+      const name = (item.name || "").trim();
+      if (!name) continue;
+
+      const key = item.id && item.id > 0 ? `id:${item.id}` : `name:${name.toLowerCase()}`;
+      const previous = merged.get(key);
+
+      merged.set(key, {
+        id: previous?.id || item.id,
+        name,
+        equipment_type: item.equipment_type || previous?.equipment_type || "General",
+        processing_time_per_sample:
+          item.processing_time_per_sample || previous?.processing_time_per_sample || 0,
+        warmup_time: item.warmup_time || previous?.warmup_time || 0,
+        break_interval: item.break_interval || previous?.break_interval || 0,
+        break_duration: item.break_duration || previous?.break_duration || 0,
+        daily_capacity: item.daily_capacity || previous?.daily_capacity || 0,
+        is_available:
+          typeof item.is_available === "boolean"
+            ? item.is_available
+            : previous?.is_available ?? true,
+        last_maintenance: item.last_maintenance || previous?.last_maintenance,
+      });
+    }
+  }
+
+  return Array.from(merged.values()).sort((a, b) => a.name.localeCompare(b.name));
+};
+
 const buildMutationPayload = (
   payload: EquipmentPayload,
   mode: "add" | "update",
@@ -76,64 +176,81 @@ const buildMutationPayload = (
 
 export async function fetchEquipmentList() {
   const endpoints = getApiEndpoints();
-  try {
-    return await fetchFirebaseEquipmentList();
-  } catch {
-    // Continue to PHP fallback.
+  const [apiResult, legacyResult] = await Promise.allSettled([
+    apiRequest<
+      | EquipmentListResponse
+      | EquipmentPayload[]
+      | SuccessEnvelope<EquipmentListResponse>
+    >(endpoints.equipmentList, {
+      noCache: true,
+      timeoutMs: 12000,
+    }).then((response) => {
+      const unwrapped = unwrap(response);
+      if (Array.isArray(unwrapped)) {
+        return unwrapped;
+      }
+      return unwrapped?.equipment ?? [];
+    }),
+    fetchLegacyEquipmentHtml().then((html) => parseLegacyEquipmentRows(html)),
+  ]);
+
+  const liveRows = [
+    ...(apiResult.status === "fulfilled" ? apiResult.value : []),
+    ...(legacyResult.status === "fulfilled" ? legacyResult.value : []),
+  ];
+
+  if (liveRows.length > 0) {
+    return mergeEquipmentRows([liveRows]);
   }
-  const response = await apiRequest<
-    | EquipmentListResponse
-    | EquipmentPayload[]
-    | SuccessEnvelope<EquipmentListResponse>
-  >(endpoints.equipmentList);
 
-  const unwrapped = unwrap(response);
-
-  if (Array.isArray(unwrapped)) {
-    return unwrapped;
-  }
-
-  return unwrapped?.equipment ?? [];
+  const rejected = [apiResult, legacyResult].find(
+    (result) => result.status === "rejected",
+  );
+  throw new Error(
+    rejected && rejected.reason instanceof Error
+      ? rejected.reason.message
+      : "Unable to load equipment from the shared website backend.",
+  );
 }
 
 export async function addEquipment(payload: EquipmentPayload) {
   const endpoints = getApiEndpoints();
   try {
-    const result = await addFirebaseEquipment(payload);
+    const response = await apiRequest<
+      EquipmentMutationResponse | SuccessEnvelope<EquipmentMutationResponse>
+    >(endpoints.equipmentAdd, {
+      method: "POST",
+      body: buildMutationPayload(payload, "add"),
+      timeoutMs: 12000,
+    });
+
+    const result = unwrap(response);
     emitLiveDataRefresh();
     return result;
-  } catch {
-    // Continue to PHP fallback.
+  } catch (error) {
+    throw error instanceof Error
+      ? error
+      : new Error("Unable to add equipment on the shared website backend.");
   }
-  const response = await apiRequest<
-    EquipmentMutationResponse | SuccessEnvelope<EquipmentMutationResponse>
-  >(endpoints.equipmentAdd, {
-    method: "POST",
-    body: buildMutationPayload(payload, "add"),
-  });
-
-  const result = unwrap(response);
-  emitLiveDataRefresh();
-  return result;
 }
 
 export async function updateEquipment(payload: EquipmentPayload) {
   const endpoints = getApiEndpoints();
   try {
-    const result = await updateFirebaseEquipment(payload);
+    const response = await apiRequest<
+      EquipmentMutationResponse | SuccessEnvelope<EquipmentMutationResponse>
+    >(endpoints.equipmentUpdate, {
+      method: "POST",
+      body: buildMutationPayload(payload, "update"),
+      timeoutMs: 12000,
+    });
+
+    const result = unwrap(response);
     emitLiveDataRefresh();
     return result;
-  } catch {
-    // Continue to PHP fallback.
+  } catch (error) {
+    throw error instanceof Error
+      ? error
+      : new Error("Unable to update equipment on the shared website backend.");
   }
-  const response = await apiRequest<
-    EquipmentMutationResponse | SuccessEnvelope<EquipmentMutationResponse>
-  >(endpoints.equipmentUpdate, {
-    method: "POST",
-    body: buildMutationPayload(payload, "update"),
-  });
-
-  const result = unwrap(response);
-  emitLiveDataRefresh();
-  return result;
 }

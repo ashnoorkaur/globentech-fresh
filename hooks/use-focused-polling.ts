@@ -9,6 +9,12 @@ type FocusedPollingOptions = {
   runOnFocus?: boolean;
   enabled?: boolean;
   minGapMs?: number;
+  /** When false, do not reload on global `emitLiveDataRefresh` (reduces flicker on heavy list screens). */
+  subscribeToLiveData?: boolean;
+  /** When false, no `setInterval` while focused — only the initial focus/mount loads run. */
+  pollWhileFocused?: boolean;
+  /** When false, ignore AppState "active" (avoids surprise refetch when switching apps). */
+  reloadOnAppActive?: boolean;
 };
 
 export function useFocusedPolling(
@@ -19,6 +25,9 @@ export function useFocusedPolling(
     runOnFocus = true,
     enabled = true,
     minGapMs = 1000,
+    subscribeToLiveData = true,
+    pollWhileFocused = true,
+    reloadOnAppActive = true,
   }: FocusedPollingOptions,
 ) {
   const callbackRef = useRef(callback);
@@ -72,25 +81,29 @@ export function useFocusedPolling(
   }, [enabled, requestInvoke, runOnMount]);
 
   useEffect(() => {
-    const unsubscribe = subscribeLiveData(() => {
-      requestInvoke();
-    });
+    const unsubscribe = subscribeToLiveData
+      ? subscribeLiveData(() => {
+          requestInvoke();
+        })
+      : () => {};
 
-    const subscription = AppState.addEventListener("change", (nextState) => {
-      if (nextState === "active") {
-        requestInvoke();
-      }
-    });
+    const subscription = reloadOnAppActive
+      ? AppState.addEventListener("change", (nextState) => {
+          if (nextState === "active") {
+            requestInvoke();
+          }
+        })
+      : null;
 
     return () => {
       unsubscribe();
-      subscription.remove();
+      subscription?.remove();
       if (scheduledInvokeRef.current) {
         clearTimeout(scheduledInvokeRef.current);
         scheduledInvokeRef.current = null;
       }
     };
-  }, [requestInvoke]);
+  }, [requestInvoke, subscribeToLiveData, reloadOnAppActive]);
 
   useFocusEffect(
     useCallback(() => {
@@ -102,14 +115,19 @@ export function useFocusedPolling(
         requestInvoke(true);
       }
 
-      const timer = setInterval(() => {
-        requestInvoke(true);
-      }, intervalMs);
+      const timer =
+        pollWhileFocused && intervalMs > 0
+          ? setInterval(() => {
+              requestInvoke(true);
+            }, intervalMs)
+          : null;
 
       return () => {
         isFocusedRef.current = false;
-        clearInterval(timer);
+        if (timer) {
+          clearInterval(timer);
+        }
       };
-    }, [enabled, intervalMs, requestInvoke, runOnFocus]),
+    }, [enabled, intervalMs, requestInvoke, runOnFocus, pollWhileFocused]),
   );
 }

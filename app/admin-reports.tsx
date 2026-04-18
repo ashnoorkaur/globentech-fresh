@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useMemo, useState } from "react";
-import { StyleSheet, Text, View } from "react-native";
+import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
@@ -14,7 +14,21 @@ import {
     type ReportRequest,
     type ReportResponse,
 } from "../lib/admin-api";
+import { formatBackendDateTime } from "../lib/date-time";
 import { useAppTheme } from "../lib/theme";
+
+const prettifyKey = (value: string) =>
+  value
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+
+const formatReportValue = (key: string, value: unknown) => {
+  if (value === null || value === undefined || value === "") return "-";
+  if (/(date|time|eta|submitted|completion|login|updated)/i.test(key)) {
+    return formatBackendDateTime(String(value), String(value));
+  }
+  return String(value);
+};
 
 export default function AdminReportsPage() {
   const theme = useAppTheme();
@@ -30,7 +44,18 @@ export default function AdminReportsPage() {
     "admin-reports:lastUpdated",
     "",
   );
-  const fixedRequest: ReportRequest = { type: "orders", option: "all" };
+  const [reportType, setReportType] = useCachedScreenState<ReportRequest["type"]>(
+    "admin-reports:type",
+    "orders",
+  );
+  const [reportOption, setReportOption] = useCachedScreenState(
+    "admin-reports:option",
+    "all",
+  );
+  const fixedRequest = useMemo<ReportRequest>(
+    () => ({ type: reportType, option: reportOption }),
+    [reportOption, reportType],
+  );
 
   const runReport = useCallback(async () => {
     if (!report) {
@@ -50,6 +75,9 @@ export default function AdminReportsPage() {
   }, [fixedRequest, report, setLastUpdated, setReport]);
 
   useFocusedPolling(runReport, { intervalMs: 30000 });
+
+  const reportTypeOptions: ReportRequest["type"][] = ["orders", "revenue", "equipment", "queue"];
+  const reportRangeOptions = ["all", "today", "week", "month"] as const;
 
   const reportRows = useMemo(() => {
     if (!report || typeof report !== "object")
@@ -105,7 +133,7 @@ export default function AdminReportsPage() {
   return (
     <RoleContentPage
       title="Reports"
-      subtitle="Generate and view reports on orders, revenue, and system performance."
+      subtitle="View reports on orders, revenue, equipment, and performance."
       activeKey="reports"
       menuItems={adminMenu}
       dashboardRoute="/admin-dashboard"
@@ -122,7 +150,7 @@ export default function AdminReportsPage() {
           ]}
         >
           <Text style={[styles.liveStripTitle, { color: theme.colors.text }]}>
-            Realtime Reports
+            Reports & Analytics
           </Text>
           <View style={styles.liveStripMeta}>
             <Ionicons
@@ -133,7 +161,7 @@ export default function AdminReportsPage() {
             <Text
               style={[styles.liveStripSub, { color: theme.colors.textMuted }]}
             >
-              Auto-refresh every 10s · Updated {lastUpdated || "--"}
+              Updated {lastUpdated || "--"}
             </Text>
           </View>
         </View>
@@ -147,8 +175,57 @@ export default function AdminReportsPage() {
             },
           ]}
         >
-          <Text style={[styles.reportTitle, { color: theme.colors.text }]}>Realtime Orders Report</Text>
-          <Text style={[styles.reportDesc, { color: theme.colors.textMuted }]}>Live Firebase-backed report for all orders. This view updates automatically and keeps only the real report output.</Text>
+          <Text style={[styles.reportTitle, { color: theme.colors.text }]}>
+            {reportType.charAt(0).toUpperCase() + reportType.slice(1)} Report
+          </Text>
+          <Text style={[styles.reportDesc, { color: theme.colors.textMuted }]}>Review current system data across orders, revenue, equipment, and queue activity.</Text>
+
+          <View style={styles.optionRow}>
+            {reportTypeOptions.map((type) => {
+              const active = reportType === type;
+              return (
+                <Pressable
+                  key={type}
+                  onPress={() => setReportType(type)}
+                  style={[
+                    styles.optionChip,
+                    {
+                      borderColor: active ? theme.colors.primary : theme.colors.border,
+                      backgroundColor: active ? theme.colors.primary : theme.colors.surfaceMuted,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.optionText, { color: active ? "#fff" : theme.colors.text }]}>
+                    {type}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
+          <View style={styles.optionRow}>
+            {reportRangeOptions.map((option) => {
+              const active = reportOption === option;
+              return (
+                <Pressable
+                  key={option}
+                  onPress={() => setReportOption(option)}
+                  style={[
+                    styles.optionChip,
+                    {
+                      borderColor: active ? theme.colors.secondary : theme.colors.border,
+                      backgroundColor: active ? theme.colors.secondary : theme.colors.surfaceMuted,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.optionText, { color: active ? "#fff" : theme.colors.text }]}>
+                    {option}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+
           <GradientButton
             onPress={runReport}
             style={styles.actionBtn}
@@ -190,6 +267,45 @@ export default function AdminReportsPage() {
               {reportSummary}
             </Text>
           ) : null}
+
+          <View style={styles.statsRow}>
+            <View
+              style={[
+                styles.statCard,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surfaceMuted,
+                },
+              ]}
+            >
+              <Text style={[styles.statLabel, { color: theme.colors.textMuted }]}>Rows</Text>
+              <Text style={[styles.statValue, { color: theme.colors.primary }]}>{reportRows.length}</Text>
+            </View>
+            <View
+              style={[
+                styles.statCard,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surfaceMuted,
+                },
+              ]}
+            >
+              <Text style={[styles.statLabel, { color: theme.colors.textMuted }]}>Type</Text>
+              <Text style={[styles.statValue, { color: theme.colors.secondary }]}>{prettifyKey(reportType)}</Text>
+            </View>
+            <View
+              style={[
+                styles.statCard,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surfaceMuted,
+                },
+              ]}
+            >
+              <Text style={[styles.statLabel, { color: theme.colors.textMuted }]}>Range</Text>
+              <Text style={[styles.statValue, { color: theme.colors.info }]}>{prettifyKey(reportOption)}</Text>
+            </View>
+          </View>
 
           {chartMetrics.length > 0 ? (
             <View
@@ -275,13 +391,13 @@ export default function AdminReportsPage() {
                     <Text
                       style={[styles.kvKey, { color: theme.colors.textMuted }]}
                     >
-                      {key}
+                      {prettifyKey(key)}
                     </Text>
                     <Text
                       style={[styles.kvValue, { color: theme.colors.text }]}
                       numberOfLines={1}
                     >
-                      {String(value ?? "-")}
+                      {formatReportValue(key, value)}
                     </Text>
                   </View>
                 ))}
@@ -316,6 +432,17 @@ const styles = StyleSheet.create({
   outputTitle: { fontSize: 16, fontWeight: "800" },
   emptyState: { fontSize: 12, fontWeight: "700" },
   summary: { fontSize: 14, lineHeight: 20, fontWeight: "700" },
+  statsRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+  statCard: {
+    flex: 1,
+    minWidth: 92,
+    borderWidth: 1,
+    borderRadius: 12,
+    padding: 10,
+    gap: 4,
+  },
+  statLabel: { fontSize: 11, fontWeight: "700", textTransform: "uppercase" },
+  statValue: { fontSize: 14, fontWeight: "800" },
   chartCard: { borderWidth: 1, borderRadius: 12, padding: 10, gap: 8 },
   chartTitle: { fontSize: 13, fontWeight: "800" },
   chartRow: { gap: 6 },

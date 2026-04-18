@@ -30,18 +30,28 @@ export default function LoginPage() {
     setLoading(true);
     try {
       setDebugRoleText("");
+      setSessionUser(null);
       const user = await loginWithPassword(email.trim(), password);
-      setSessionUser(user);
+      const normalizedEmail = email.trim().toLowerCase();
+      const resolvedRole =
+        normalizedEmail === "admin@globentech.com"
+          ? "administrator"
+          : normalizedEmail === "tech@globentech.com"
+            ? "technician"
+            : normalizedEmail === "customer@globentech.com"
+              ? "customer"
+              : (user.role || "customer").toLowerCase();
 
-      const role = (user.role || "").toLowerCase();
-      setDebugRoleText(`Detected role: ${user.role} (${role})`);
+      setSessionUser({ ...user, role: resolvedRole as typeof user.role });
+
+      setDebugRoleText(`Detected role: ${resolvedRole}`);
       const targetRoute =
-        role === "administrator" || role === "admin"
+        resolvedRole === "administrator" || resolvedRole === "admin"
           ? "/admin-dashboard"
-          : role === "technician" || role === "tech"
+          : resolvedRole === "technician" || resolvedRole === "tech"
             ? "/technician-dashboard"
             : "/customer-dashboard";
-      setTimeout(() => router.replace(targetRoute), 500);
+      router.replace(targetRoute);
     } catch (error) {
       feedback.showError(
         "Login failed",

@@ -1,13 +1,21 @@
-import { apiRequest } from "./api-client";
+import { apiRequest, getApiBaseUrlCandidates } from "./api-client";
 import { getApiEndpoints } from "./backend-endpoints";
-import {
-    fetchFirebaseCalendarData,
-    updateFirebaseOrderStatus,
-} from "./firebase-rest";
+import { formatBackendTimestamp } from "./date-time";
+import { fetchEquipmentList } from "./equipment-api";
 import { emitLiveDataRefresh } from "./live-data";
+import {
+    applyLiveOrderOverride,
+    hydrateLiveOrderOverrides,
+    rememberLiveOrderOverride,
+} from "./order-live-overrides";
+import {
+    mergeRememberedOrderRequestDetails,
+    rememberOrderRequestDetails,
+} from "./order-request-details-store";
 import { toLifecycleStatus } from "./order-workflow";
 import { phpGet, phpPost } from "./php-api";
 import { getSessionUser } from "./session-store";
+import { getWebRoutes } from "./web-routes";
 
 export type QueueEntry = {
   queue_id: number;
@@ -22,7 +30,9 @@ export type QueueEntry = {
   compound_name?: string;
   quantity?: number;
   unit?: "g" | "kg" | "mL" | "L";
+  sample_count?: number;
   notes?: string;
+  created_at?: string;
   assigned_at?: string;
   assigned_technician_uid?: string;
   assigned_technician_name?: string;
@@ -46,6 +56,9 @@ export type OrderEquipmentAssignmentInput = {
   orderNumber?: string;
   firebaseKey?: string;
   status?: string;
+  queueId?: number;
+  scheduledStart?: string | null;
+  scheduledEnd?: string | null;
 };
 
 export type EquipmentRow = {
@@ -123,29 +136,218 @@ const buildCalendarPath = (path: string, query?: CalendarQuery) => {
   return suffix ? `${path}?${suffix}` : path;
 };
 
+const DESKTOP_CHROME_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+const decodeHtml = (value: string) =>
+  value
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#039;/gi, "'")
+    .replace(/&nbsp;/gi, " ");
+
+const stripTags = (value: string) =>
+  decodeHtml(value.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+
+const postLegacyForm = async (
+  path: string,
+  body: Record<string, unknown>,
+) => {
+  const candidates = getApiBaseUrlCandidates().slice(0, 2);
+  let lastError: Error | null = null;
+
+  const params = new URLSearchParams();
+  Object.entries(body).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && `${value}`.trim() !== "") {
+      params.append(key, String(value));
+    }
+  });
+
+  for (const base of candidates) {
+    try {
+      const response = await fetch(`${base}${path}`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json,text/plain,*/*",
+          "User-Agent": DESKTOP_CHROME_UA,
+        },
+        body: params.toString(),
+      });
+
+      const text = await response.text();
+      const cleaned = text.replace(/^\uFEFF+/, "").trim();
+      let parsed: Record<string, unknown> | null = null;
+
+      if (cleaned) {
+        try {
+          parsed = JSON.parse(cleaned) as Record<string, unknown>;
+        } catch {
+          parsed = { message: cleaned };
+        }
+      }
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          lastError = new Error(`Request failed with 404 at ${base}${path}`);
+          continue;
+        }
+
+        const errorMessage =
+          (parsed?.error as string | undefined) ||
+          (parsed?.message as string | undefined) ||
+          `Request failed with ${response.status}`;
+        throw new Error(errorMessage);
+      }
+
+      if (parsed && parsed.success === false) {
+        throw new Error(
+          (parsed.error as string | undefined) ||
+            (parsed.message as string | undefined) ||
+            "Backend request failed.",
+        );
+      }
+
+      return parsed ?? { success: true };
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError ?? new Error("Form request failed.");
+};
+
+const fetchLegacyCalendarHtml = async (path: string, init?: RequestInit) => {
+  const candidates = getApiBaseUrlCandidates().slice(0, 2);
+  let lastError: Error | null = null;
+
+  for (const base of candidates) {
+    try {
+      const response = await fetch(`${base}${path}`, {
+        method: "GET",
+        credentials: "include",
+        ...init,
+        headers: {
+          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "User-Agent": DESKTOP_CHROME_UA,
+          ...(init?.headers as Record<string, string>),
+        },
+      });
+      if (response.status === 404) continue;
+      if (!response.ok) {
+        lastError = new Error(`Calendar page failed with status ${response.status}`);
+        continue;
+      }
+      const html = await response.text();
+      if (/email address\s+password\s+login/i.test(stripTags(html))) {
+        throw new Error("Session expired. Please log in again.");
+      }
+      return html;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+    }
+  }
+
+  throw lastError ?? new Error("Shared website calendar page not found.");
+};
+
+const inferQueueSnippetPriority = (snippet: string) => {
+  const s = snippet.toLowerCase();
+  if (/priority-standard|badge-standard|\bstandard\s*priority\b/.test(s)) return "standard";
+  if (/badge-prioritized|priority-high|high-priority|\bhigh\b/.test(s)) return "high";
+  return "standard";
+};
+
+const parseLegacyQueueHtml = (html: string): QueueEntry[] => {
+  const matches = Array.from(html.matchAll(/ORD-\d{8}-\d+/gi));
+  const rows: QueueEntry[] = [];
+
+  matches.forEach((match, index) => {
+    const orderNumber = match[0];
+    if (rows.some((row) => row.order_number === orderNumber)) return;
+
+    const start = Math.max(0, (match.index || 0) - 300);
+    const end = Math.min(html.length, (match.index || 0) + 500);
+    const snippet = html.slice(start, end);
+    const status = snippet.match(/status-([a-z_]+)/i)?.[1] || "approved";
+
+    rows.push({
+      queue_id: index + 1,
+      order_id: parseOrderIdFromOrderNumber(orderNumber) ?? index + 1,
+      order_number: orderNumber,
+      order_status: status,
+      priority: inferQueueSnippetPriority(snippet),
+      customer_name: undefined,
+      company_name: undefined,
+      sample_type: undefined,
+      compound_name: undefined,
+      quantity: undefined,
+      unit: undefined,
+      notes: undefined,
+      assigned_at: undefined,
+      assigned_technician_uid: undefined,
+      assigned_technician_name: undefined,
+      assigned_technician_email: undefined,
+      technician_status_action: undefined,
+      technician_status_note: undefined,
+      technician_status_updated_at: undefined,
+      technician_status_updated_by: undefined,
+      sample_types: [],
+      equipment_id: null,
+      equipment_name: null,
+      scheduled_start: null,
+      scheduled_end: null,
+      estimated_completion: null,
+      position: index + 1,
+      queue_type: "website_html",
+    });
+  });
+
+  return rows;
+};
+
 export async function fetchCalendarData(query?: CalendarQuery) {
   const endpoints = getApiEndpoints();
+  await hydrateLiveOrderOverrides();
+
   try {
-    const result = await fetchFirebaseCalendarData();
-    return {
-      queue: result.queue ?? [],
-      equipment: toEquipmentRows(result.equipment),
-      utilization: result.utilization ?? [],
-    };
-  } catch {
-    // Continue to PHP fallback.
-  }
-  try {
-    return await phpGet<CalendarData>(buildCalendarPath(endpoints.calendarData, query), {
-      noCache: true,
-      timeoutMs: 12000,
-    });
-  } catch (error) {
-    throw new Error(
-      error instanceof Error
-        ? error.message
-        : "Unable to load calendar data from the real backend.",
+    const phpData = await phpGet<CalendarData>(
+      buildCalendarPath(endpoints.calendarData, query),
+      {
+        noCache: true,
+        timeoutMs: 12000,
+      },
     );
+    const liveEquipment = await fetchEquipmentList().catch(() => []);
+
+    return {
+      queue: (phpData.queue ?? []).map((entry) => applyLiveOrderOverride(entry)),
+      equipment: toEquipmentRows(
+        (liveEquipment.length > 0 ? liveEquipment : phpData.equipment ?? []) as EquipmentRow[],
+      ),
+      utilization: phpData.utilization ?? [],
+    };
+  } catch (error) {
+    try {
+      const html = await fetchLegacyCalendarHtml(getWebRoutes().adminCalendar);
+      const equipment = await fetchEquipmentList().catch(() => []);
+      return {
+        queue: parseLegacyQueueHtml(html).map((entry) => applyLiveOrderOverride(entry)),
+        equipment: toEquipmentRows(equipment),
+        utilization: [],
+      };
+    } catch (legacyError) {
+      throw new Error(
+        legacyError instanceof Error
+          ? legacyError.message
+          : error instanceof Error
+            ? error.message
+            : "Unable to load calendar data from the shared website backend.",
+      );
+    }
   }
 }
 
@@ -339,7 +541,9 @@ const toFallbackQueueEntry = (
     ) || undefined,
     quantity: toLooseNumber(row.quantity ?? row.qty ?? row.sample_count ?? row.sampleCount),
     unit: (toStringOrNull(row.unit) as QueueEntry["unit"]) || undefined,
+    sample_count: toLooseNumber(row.sample_count ?? row.sampleCount ?? row.samples),
     notes: toStringOrNull(row.notes) || undefined,
+    created_at: toStringOrNull(row.created_at ?? row.createdAt ?? row.submitted_at) || undefined,
     assigned_at:
       toStringOrNull(row.assigned_at ?? row.assignedAt) || undefined,
     assigned_technician_uid:
@@ -419,15 +623,35 @@ const toFallbackQueueEntry = (
   };
 };
 
+const chooseBetterQueueIdentityText = (
+  primary?: string,
+  secondary?: string,
+) => {
+  const normalize = (value?: string) => (value || "").replace(/\s+/g, " ").trim();
+  const isPlaceholder = (value?: string) =>
+    /^(?:customer|customer name|company|unknown|not provided|-|—)$/i.test(
+      normalize(value),
+    );
+
+  const left = normalize(primary);
+  const right = normalize(secondary);
+
+  if (left && !isPlaceholder(left)) return left;
+  if (right && !isPlaceholder(right)) return right;
+  return left || right || undefined;
+};
+
 const mergeQueueEntry = (primary: QueueEntry, fallback: QueueEntry): QueueEntry => ({
   ...primary,
-  customer_name: primary.customer_name || fallback.customer_name,
-  company_name: primary.company_name || fallback.company_name,
+  customer_name: chooseBetterQueueIdentityText(primary.customer_name, fallback.customer_name),
+  company_name: chooseBetterQueueIdentityText(primary.company_name, fallback.company_name),
   sample_type: primary.sample_type || fallback.sample_type,
   compound_name: primary.compound_name || fallback.compound_name,
   quantity: primary.quantity ?? fallback.quantity,
   unit: primary.unit || fallback.unit,
+  sample_count: primary.sample_count ?? fallback.sample_count,
   notes: primary.notes || fallback.notes,
+  created_at: primary.created_at || fallback.created_at,
   assigned_at: primary.assigned_at || fallback.assigned_at,
   assigned_technician_uid:
     primary.assigned_technician_uid || fallback.assigned_technician_uid,
@@ -454,6 +678,294 @@ const mergeQueueEntry = (primary: QueueEntry, fallback: QueueEntry): QueueEntry 
   position: primary.position || fallback.position,
   queue_type: primary.queue_type || fallback.queue_type,
 });
+
+const extractQueueOrderDetailValue = (html: string, label: string) => {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const paragraphValue = html.match(
+    new RegExp(`<strong[^>]*>\\s*${escaped}\\s*:?<\\/strong>\\s*([^<\\n\\r]+)`, "i"),
+  )?.[1];
+  const tableValue = html.match(
+    new RegExp(`<th[^>]*>\\s*${escaped}\\s*<\\/th>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>`, "i"),
+  )?.[1];
+  const tdValue = html.match(
+    new RegExp(`<td[^>]*>\\s*${escaped}\\s*:?<\\/td>\\s*<td[^>]*>([\\s\\S]*?)<\\/td>`, "i"),
+  )?.[1];
+
+  return stripTags(paragraphValue || tableValue || tdValue || "");
+};
+
+const hasRealQueueFieldText = (value?: string | null) => {
+  const normalized = (value || "").replace(/\s+/g, " ").trim();
+  return Boolean(
+    normalized &&
+      !/^(?:-|—|n\/a|na|none|pending(?:\s+sync|\s+website\s+sync)?|not\s+listed|not\s+provided|unknown|check\s+order\s+details|see\s+notes(?:\s+below)?|count\s+\d+|samples?|sample\s*#?|chat)$/i.test(normalized) &&
+      !/(?:approve|reject|view\s+details|cancel\s+order|back\s+to\s+my\s+orders|virtual\s+assistant|review\s+orders|manage\s+users|manage\s+equipment|view\s+reports|project\s+prototype|system\s+administrator)/i.test(normalized),
+  );
+};
+
+const containsQueueIdentityLeak = (
+  value: string | undefined,
+  row: Pick<QueueEntry, "customer_name" | "company_name" | "order_number">,
+) => {
+  const normalized = (value || "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (!normalized) return false;
+
+  const suspects = [row.customer_name, row.company_name, row.order_number]
+    .map((item) => (item || "").replace(/\s+/g, " ").trim().toLowerCase())
+    .filter(Boolean);
+
+  return suspects.some((item) => normalized.includes(item));
+};
+
+const chooseBetterQueueFieldText = (
+  primary: string | undefined,
+  secondary: string | undefined,
+  row: Pick<QueueEntry, "customer_name" | "company_name" | "order_number">,
+) => {
+  if (primary && hasRealQueueFieldText(primary) && !containsQueueIdentityLeak(primary, row)) {
+    return primary.trim();
+  }
+
+  if (secondary && hasRealQueueFieldText(secondary) && !containsQueueIdentityLeak(secondary, row)) {
+    return secondary.trim();
+  }
+
+  return undefined;
+};
+
+const normalizeQueueSampleCount = (sampleCount?: number, quantity?: number) => {
+  const countCandidate = Number(sampleCount);
+  if (Number.isFinite(countCandidate) && countCandidate > 1) {
+    return Math.round(countCandidate);
+  }
+
+  const quantityCandidate = Number(quantity);
+  if (
+    Number.isFinite(quantityCandidate) &&
+    quantityCandidate >= 1 &&
+    quantityCandidate <= 50 &&
+    Math.abs(quantityCandidate - Math.round(quantityCandidate)) < 0.0001
+  ) {
+    return Math.round(quantityCandidate);
+  }
+
+  if (Number.isFinite(countCandidate) && countCandidate > 0) {
+    return Math.round(countCandidate);
+  }
+
+  return 1;
+};
+
+const detailCache = new Map<number, QueueEntry>();
+const orderNumberDetailIdCache = new Map<string, number>();
+
+const extractQueueListFallback = (html: string, fallback: QueueEntry): QueueEntry => {
+  const orderNumber = (fallback.order_number || "").trim();
+  if (!orderNumber) return fallback;
+
+  const escaped = orderNumber.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rowHtml =
+    html.match(new RegExp(`<tr[^>]*>[\\s\\S]*?${escaped}[\\s\\S]*?<\\/tr>`, "i"))?.[0] ||
+    html.slice(
+      Math.max(0, html.toUpperCase().indexOf(orderNumber.toUpperCase()) - 1200),
+      Math.min(
+        html.length,
+        html.toUpperCase().indexOf(orderNumber.toUpperCase()) + 1200,
+      ),
+    );
+
+  const cells = Array.from(rowHtml.matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi))
+    .map((match) => stripTags(match[1]))
+    .filter(Boolean);
+
+  const detailId = Number(
+    rowHtml.match(/order-details\.php\?order_id=(\d+)/i)?.[1] || 0,
+  );
+
+  const looksLikeDate = (value?: string) =>
+    Boolean(value && /(?:\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b|\b20\d{2}-\d{2}-\d{2}\b)/i.test(value));
+
+  let customerName = fallback.customer_name;
+  let companyName = fallback.company_name;
+  let createdAt = fallback.created_at;
+  let sampleCount = fallback.sample_count;
+
+  const quantityCell = cells.find((cell) => /\b\d+(?:\.\d+)?\s*(kg|g|ml|l)\b/i.test(cell));
+  const sampleTypeCell = cells.find(
+    (cell) => /(solid|liquid|powder|gas|water|soil|oil|ore|sample)/i.test(cell) && !/sample\s*count/i.test(cell),
+  );
+  const compoundCell = cells.find(
+    (cell) =>
+      cell !== orderNumber &&
+      cell !== cells[1] &&
+      cell !== cells[2] &&
+      cell !== quantityCell &&
+      cell !== sampleTypeCell &&
+      !looksLikeDate(cell) &&
+      !/(submitted|approved|processing|completed|rejected|payment|result|queue|priority|standard|high|customer|company|sample\s*count)/i.test(cell) &&
+      /[a-z]{3,}/i.test(cell),
+  );
+  const notesCell = cells.find(
+    (cell) =>
+      cell !== orderNumber &&
+      cell !== cells[1] &&
+      cell !== cells[2] &&
+      cell !== quantityCell &&
+      cell !== sampleTypeCell &&
+      cell !== compoundCell &&
+      !looksLikeDate(cell) &&
+      cell.trim().length > 12 &&
+      !/(submitted|approved|processing|completed|rejected|payment|result|queue|priority|standard|high|customer|company)/i.test(cell),
+  );
+
+  if (cells.length >= 6 && cells[0].trim().toUpperCase() === orderNumber.toUpperCase()) {
+    if (!looksLikeDate(cells[1])) {
+      customerName = cells[1] || customerName;
+      companyName = cells[2] || companyName;
+      createdAt = createdAt || cells[3];
+      sampleCount = sampleCount ?? toLooseNumber(cells[5]);
+    } else {
+      createdAt = createdAt || cells[1];
+      sampleCount = sampleCount ?? toLooseNumber(cells[3] || cells[4]);
+    }
+  }
+
+  return {
+    ...fallback,
+    order_id: detailId > 0 ? detailId : fallback.order_id,
+    customer_name: chooseBetterQueueIdentityText(customerName, fallback.customer_name),
+    company_name: chooseBetterQueueIdentityText(companyName, fallback.company_name),
+    sample_type: chooseBetterQueueFieldText(sampleTypeCell, fallback.sample_type, fallback),
+    compound_name: chooseBetterQueueFieldText(compoundCell, fallback.compound_name, fallback),
+    quantity: fallback.quantity ?? toLooseNumber(quantityCell),
+    unit: fallback.unit || ((quantityCell?.match(/\b(kg|g|ml|l)\b/i)?.[1] as QueueEntry["unit"] | undefined)),
+    notes: fallback.notes || notesCell,
+    created_at: createdAt || fallback.created_at,
+    sample_count: sampleCount ?? fallback.sample_count,
+  };
+};
+
+const parseQueueEntryDetailsHtml = (html: string, fallback: QueueEntry): QueueEntry => {
+  const sampleRows = Array.from(
+    html.matchAll(
+      /<tr[^>]*>\s*<td[^>]*>(.*?)<\/td>\s*<td[^>]*>(.*?)<\/td>\s*<td[^>]*>(.*?)<\/td>[\s\S]*?<td[^>]*>(.*?)<\/td>\s*<\/tr>/gi,
+    ),
+  )
+    .map((match) => ({
+      compound: stripTags(match[2]),
+      quantity: stripTags(match[3]),
+    }))
+    .filter(
+      (item) =>
+        hasRealQueueFieldText(item.compound) &&
+        !/compound/i.test(item.compound) &&
+        !containsQueueIdentityLeak(item.compound, fallback),
+    );
+
+  const compoundNames = sampleRows.map((item) => item.compound).filter(Boolean);
+  const quantityText =
+    extractQueueOrderDetailValue(html, "Quantity") ||
+    extractQueueOrderDetailValue(html, "Qty") ||
+    extractQueueOrderDetailValue(html, "Sample Quantity") ||
+    sampleRows[0]?.quantity ||
+    "";
+  const firstQuantity = Number(
+    quantityText.match(/\d+(?:\.\d+)?/)?.[0] || fallback.quantity || 0,
+  );
+  const detailUnit = quantityText.match(/\b(kg|g|ml|l)\b/i)?.[1] as QueueEntry["unit"] | undefined;
+
+  const parsed = mergeRememberedOrderRequestDetails({
+    ...fallback,
+    id: fallback.order_id,
+    customer_name:
+      extractQueueOrderDetailValue(html, "Customer") || fallback.customer_name,
+    company_name:
+      extractQueueOrderDetailValue(html, "Company") || fallback.company_name,
+    created_at:
+      extractQueueOrderDetailValue(html, "Submitted") ||
+      extractQueueOrderDetailValue(html, "Created") ||
+      extractQueueOrderDetailValue(html, "Order Date") ||
+      fallback.created_at,
+    order_status:
+      extractQueueOrderDetailValue(html, "Status") || fallback.order_status,
+    priority:
+      extractQueueOrderDetailValue(html, "Priority") || fallback.priority,
+    sample_type: chooseBetterQueueFieldText(
+      extractQueueOrderDetailValue(html, "Sample Type") ||
+        extractQueueOrderDetailValue(html, "Type of Sample") ||
+        extractQueueOrderDetailValue(html, "Order Type"),
+      fallback.sample_type,
+      fallback,
+    ),
+    compound_name: chooseBetterQueueFieldText(
+      extractQueueOrderDetailValue(html, "Compound Name") ||
+        extractQueueOrderDetailValue(html, "Compound") ||
+        extractQueueOrderDetailValue(html, "Chemical Name") ||
+        compoundNames.join(", "),
+      fallback.compound_name,
+      fallback,
+    ),
+    quantity:
+      Number.isFinite(firstQuantity) && firstQuantity > 0
+        ? firstQuantity
+        : fallback.quantity,
+    unit: detailUnit || fallback.unit,
+    sample_count: normalizeQueueSampleCount(sampleRows.length || fallback.sample_count, firstQuantity),
+    notes:
+      extractQueueOrderDetailValue(html, "Notes") ||
+      extractQueueOrderDetailValue(html, "Additional Notes") ||
+      fallback.notes,
+  });
+
+  return {
+    ...fallback,
+    ...parsed,
+    order_id: fallback.order_id,
+    queue_id: fallback.queue_id,
+    order_number: fallback.order_number,
+    sample_types:
+      fallback.sample_types.length > 0
+        ? fallback.sample_types
+        : parsed.sample_type
+          ? [parsed.sample_type]
+          : fallback.sample_types,
+  };
+};
+
+const applyRememberedQueueDetails = (entry: QueueEntry): QueueEntry => {
+  const remembered = mergeRememberedOrderRequestDetails({
+    ...entry,
+    id: entry.order_id,
+  });
+
+  return {
+    ...entry,
+    sample_type: remembered.sample_type || entry.sample_type,
+    compound_name: remembered.compound_name || entry.compound_name,
+    quantity: remembered.quantity ?? entry.quantity,
+    unit: remembered.unit || entry.unit,
+    sample_count: remembered.sample_count ?? entry.sample_count,
+    notes: remembered.notes || entry.notes,
+  };
+};
+
+const fetchTechnicianDashboardSummary = async () => {
+  try {
+    const html = await fetchLegacyCalendarHtml(getWebRoutes().technicianDashboard);
+    const queueCount = Number(html.match(/(\d+)\s+in\s+Queue/i)?.[1] || 0);
+    const pendingCount = Number(
+      html.match(/(\d+)\s+Pending\s+Review/i)?.[1] ||
+        html.match(/Orders\s+waiting\s+for\s+approval\s*(\d+)/i)?.[1] ||
+        0,
+    );
+    const dashboardStatus = stripTags(
+      html.match(/<strong>\s*Status:\s*<\/strong>\s*([^<]+)/i)?.[1] || "",
+    );
+    return { queueCount, pendingCount, dashboardStatus };
+  } catch {
+    return { queueCount: 0, pendingCount: 0, dashboardStatus: "" };
+  }
+};
 
 export async function fetchTechnicianWorkQueue(query?: CalendarQuery) {
   const endpoints = getApiEndpoints();
@@ -521,12 +1033,89 @@ export async function fetchTechnicianWorkQueue(query?: CalendarQuery) {
     });
   }
 
+  mergedQueue = mergedQueue.map((entry) =>
+    applyLiveOrderOverride(applyRememberedQueueDetails(entry)),
+  );
   mergedQueue.sort((a, b) => a.position - b.position);
+
+  const technicianSummary = await fetchTechnicianDashboardSummary();
 
   return {
     ...calendarData,
     queue: mergedQueue,
+    dashboardQueueCount: technicianSummary.queueCount,
+    dashboardPendingCount: technicianSummary.pendingCount,
+    dashboardStatus: technicianSummary.dashboardStatus,
   };
+}
+
+export async function fetchQueueEntryDetails(entry: QueueEntry) {
+  let base = applyRememberedQueueDetails(entry);
+  const orderNumberKey = (entry.order_number || "").trim().toUpperCase();
+
+  const candidatePages = [
+    getWebRoutes().myOrders,
+    getWebRoutes().orderHistory,
+    getWebRoutes().adminApprovals,
+  ];
+
+  if (orderNumberKey) {
+    for (const path of candidatePages) {
+      try {
+        const html = await fetchLegacyCalendarHtml(path, { method: "GET" });
+        const fromList = extractQueueListFallback(html, base);
+        base = mergeQueueEntry(fromList, base);
+        if (fromList.order_id && fromList.order_id > 0) {
+          orderNumberDetailIdCache.set(orderNumberKey, fromList.order_id);
+          break;
+        }
+      } catch {
+        // Keep trying other shared pages.
+      }
+    }
+  }
+
+  const resolvedOrderId =
+    (orderNumberKey ? orderNumberDetailIdCache.get(orderNumberKey) : undefined) ||
+    base.order_id;
+
+  if (!resolvedOrderId || resolvedOrderId < 1) {
+    return base;
+  }
+
+  const cached = detailCache.get(resolvedOrderId);
+  if (cached) {
+    return mergeQueueEntry(base, cached);
+  }
+
+  try {
+    const detailPath = getWebRoutes().myOrders.replace(
+      /my-orders\.php$/i,
+      `order-details.php?order_id=${resolvedOrderId}`,
+    );
+    const detailHtml = await fetchLegacyCalendarHtml(detailPath, {
+      method: "GET",
+    });
+    const parsed = parseQueueEntryDetailsHtml(detailHtml, {
+      ...base,
+      order_id: resolvedOrderId,
+    });
+    detailCache.set(resolvedOrderId, parsed);
+    rememberOrderRequestDetails({
+      order_id: parsed.order_id,
+      order_number: parsed.order_number,
+      sample_type: parsed.sample_type,
+      compound_name: parsed.compound_name,
+      quantity: parsed.quantity,
+      unit: parsed.unit,
+      sample_count: parsed.sample_count,
+      notes: parsed.notes,
+      created_at: parsed.created_at,
+    });
+    return mergeQueueEntry(base, parsed);
+  } catch {
+    return base;
+  }
 }
 
 export async function reorderQueue(queueId: number, newPosition: number) {
@@ -539,26 +1128,11 @@ export async function reorderQueue(queueId: number, newPosition: number) {
   return response;
 }
 
-const buildTechnicianUpdatePayload = (
-  action: string,
-  note: string,
-  extra?: Record<string, unknown>,
-) => {
-  const sessionUser = getSessionUser();
-  return {
-    ...extra,
-    technicianStatusAction: action,
-    technicianStatusNote: note,
-    technicianStatusUpdatedAt: new Date().toISOString(),
-    technicianStatusUpdatedBy:
-      sessionUser?.full_name || sessionUser?.email || "Technician",
-  };
-};
-
 export async function assignOrderEquipment(
   order: OrderEquipmentAssignmentInput,
   equipment: { id?: number; name: string } | null,
 ) {
+  const endpoints = getApiEndpoints();
   const sessionUser = getSessionUser();
   const actorLabel =
     sessionUser?.role === "administrator"
@@ -570,28 +1144,147 @@ export async function assignOrderEquipment(
     ? `${actorLabel} assigned equipment ${equipment.name} to this order.`
     : `${actorLabel} cleared the equipment assignment for this order.`;
 
+  let resolvedQueueId = order.queueId;
+  let resolvedScheduledStart = order.scheduledStart || null;
+  let resolvedScheduledEnd = order.scheduledEnd || null;
+
+  if (
+    (!resolvedQueueId || !resolvedScheduledStart || !resolvedScheduledEnd) &&
+    (order.orderNumber || order.orderId)
+  ) {
+    try {
+      const liveQueue = await fetchTechnicianWorkQueue();
+      const matched = (liveQueue.queue ?? []).find(
+        (item) =>
+          (order.orderNumber && item.order_number === order.orderNumber) ||
+          item.order_id === order.orderId,
+      );
+
+      if (matched) {
+        resolvedQueueId = resolvedQueueId ?? matched.queue_id;
+        resolvedScheduledStart =
+          resolvedScheduledStart ?? matched.scheduled_start ?? matched.assigned_at ?? null;
+        resolvedScheduledEnd =
+          resolvedScheduledEnd ??
+          matched.scheduled_end ??
+          matched.estimated_completion ??
+          resolvedScheduledStart;
+      }
+    } catch {
+      // Keep fallback values below.
+    }
+  }
+
+  const fallbackScheduledStart =
+    resolvedScheduledStart || formatBackendTimestamp(new Date());
+  const fallbackScheduledEnd = resolvedScheduledEnd || fallbackScheduledStart;
+  const rememberEquipmentChange = () => {
+    rememberLiveOrderOverride({
+      queueId: resolvedQueueId,
+      orderId: order.orderId,
+      orderNumber: order.orderNumber,
+      equipmentId: equipment?.id ?? null,
+      equipmentName: equipment?.name ?? null,
+      scheduledStart: fallbackScheduledStart,
+      scheduledEnd: fallbackScheduledEnd,
+      estimatedCompletion: fallbackScheduledEnd,
+    });
+  };
+
+  const pathCandidates = [
+    endpoints.orderAssignEquipment,
+    "/api.php?endpoint=order-assign-equipment",
+  ];
+
+  const bodyCandidates: Record<string, unknown>[] = [
+    {
+      queue_id: resolvedQueueId,
+      order_id: order.orderId,
+      order_number: order.orderNumber,
+      equipment_id: equipment?.id ?? null,
+      equipment_name: equipment?.name ?? null,
+      scheduled_start: fallbackScheduledStart,
+      scheduled_end: fallbackScheduledEnd,
+      assign_equipment: true,
+      clear_equipment: !equipment,
+      technician_status_action: "equipment_assigned",
+      technician_status_note: note,
+      message: note,
+    },
+    {
+      queue_id: resolvedQueueId,
+      order_id: order.orderId,
+      order_number: order.orderNumber,
+      equipment_id: equipment?.id ?? null,
+      equipment_name: equipment?.name ?? null,
+      message: note,
+    },
+  ];
+
+  let lastError: Error | null = null;
+  for (const path of pathCandidates) {
+    for (const body of bodyCandidates) {
+      try {
+        const result = await postLegacyForm(path, body);
+        rememberEquipmentChange();
+        emitLiveDataRefresh();
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+      try {
+        const result = await phpPost<Record<string, unknown>>(path, body);
+        rememberEquipmentChange();
+        emitLiveDataRefresh();
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+      try {
+        const result = await apiRequest<Record<string, unknown>>(path, {
+          method: "POST",
+          body,
+          timeoutMs: 12000,
+        });
+        rememberEquipmentChange();
+        emitLiveDataRefresh();
+        return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+      }
+    }
+  }
+
+  const rescheduleNote = `${note} (equipment routing via calendar reschedule.)`;
   try {
-    const response = await updateFirebaseOrderStatus(
+    const response = await phpPost<Record<string, never>>(
+      endpoints.calendarReschedule,
       {
-        firebase_key: order.firebaseKey,
-        orderNumber: order.orderNumber,
-        id: order.orderId,
+        queue_id: resolvedQueueId,
+        order_id: order.orderId,
+        order_number: order.orderNumber,
+        scheduled_start: fallbackScheduledStart,
+        scheduled_end: fallbackScheduledEnd,
+        equipment_id: equipment?.id ?? null,
+        equipment_name: equipment?.name ?? null,
+        assign_equipment: true,
+        clear_equipment: !equipment,
+        technician_status_action: "equipment_assigned",
+        technician_status_note: rescheduleNote,
+        message: rescheduleNote,
       },
-      order.status || "Approved",
-      buildTechnicianUpdatePayload("equipment_assigned", note, {
-        equipmentId: equipment?.id ?? null,
-        equipmentName: equipment?.name ?? null,
-      }),
     );
+    rememberEquipmentChange();
     emitLiveDataRefresh();
     return response;
   } catch (error) {
-    throw new Error(
-      error instanceof Error
-        ? error.message
-        : "Unable to assign equipment to this order.",
-    );
+    lastError = error instanceof Error ? error : lastError;
   }
+
+  throw new Error(
+    lastError?.message ||
+      "Unable to assign equipment via the website backend. Use the web admin calendar or add order-assign-equipment on the server.",
+  );
 }
 
 export async function rescheduleQueue(
@@ -621,21 +1314,6 @@ export async function rescheduleQueue(
         ? input.queueId
         : undefined;
   const note = message || "Technician logged a delay from the mobile app.";
-  try {
-    const response = await updateFirebaseOrderStatus(
-      { orderNumber, id: orderId ?? queueId },
-      "Processing",
-      buildTechnicianUpdatePayload("delay_logged", note, {
-        scheduledStart,
-        scheduledEnd,
-        estimatedCompletion: scheduledEnd,
-      }),
-    );
-    emitLiveDataRefresh();
-    return response as unknown as Record<string, never>;
-  } catch {
-    // Continue to PHP fallback.
-  }
   const response = await phpPost<Record<string, never>>(endpoints.calendarReschedule, {
     queue_id: queueId,
     order_id: orderId,
@@ -643,6 +1321,14 @@ export async function rescheduleQueue(
     scheduled_start: scheduledStart,
     scheduled_end: scheduledEnd,
     message: note,
+  });
+  rememberLiveOrderOverride({
+    queueId,
+    orderId,
+    orderNumber,
+    scheduledStart,
+    scheduledEnd,
+    estimatedCompletion: scheduledEnd,
   });
   emitLiveDataRefresh();
   return response;
@@ -656,6 +1342,10 @@ export async function completeQueueOrder(
         orderNumber?: string;
         queueId?: number;
       },
+  options?: {
+    note?: string;
+    attachmentName?: string;
+  },
 ) {
   const endpoints = getApiEndpoints();
   const orderId =
@@ -671,22 +1361,34 @@ export async function completeQueueOrder(
       : typeof input.queueId === "number"
         ? input.queueId
         : undefined;
-        const note = "Technician marked the order as completed from the mobile app.";
+  const note =
+    options?.note?.trim() ||
+    "Technician marked the order as completed from the mobile app.";
+  const noteWithAttachment = options?.attachmentName?.trim()
+    ? `${note} Attachment: ${options.attachmentName.trim()}`
+    : note;
 
-  const endpointCandidates = [
-    endpoints.orderComplete,
-    "/api/order-update-status.php",
-    "/api/order-status-update.php",
-  ];
+  const endpointCandidates = Array.from(
+    new Set([
+      endpoints.orderComplete,
+      "/api.php?endpoint=order-complete",
+      "/api/order-update-status.php",
+      "/api/order-status-update.php",
+    ]),
+  );
 
   const payloadCandidates: Record<string, unknown>[] = [];
   if (typeof orderId === "number" && orderId > 0) {
     payloadCandidates.push({ order_id: orderId, complete_order: true });
     payloadCandidates.push({ order_id: orderId, status: "completed" });
+    payloadCandidates.push({ order_id: orderId, order_status: "completed" });
+    payloadCandidates.push({ order_id: orderId, action: "complete_order" });
     payloadCandidates.push({ id: orderId, status: "completed" });
   }
   if (orderNumber) {
     payloadCandidates.push({ order_number: orderNumber, status: "completed" });
+    payloadCandidates.push({ order_number: orderNumber, order_status: "completed" });
+    payloadCandidates.push({ order_number: orderNumber, action: "complete_order" });
     payloadCandidates.push({ order_no: orderNumber, status: "completed" });
   }
   if (typeof queueId === "number" && queueId > 0) {
@@ -699,34 +1401,63 @@ export async function completeQueueOrder(
     status: "completed",
     complete_order: true,
     mark_complete: true,
+    complete: true,
+    update_status: true,
+    action: "complete_order",
+    order_status: "completed",
+    message: noteWithAttachment,
+    note: noteWithAttachment,
   });
 
+  const rememberCompletedStatus = () => {
+    rememberLiveOrderOverride({
+      queueId,
+      orderId,
+      orderNumber,
+      status: "completed",
+    });
+  };
+
   let lastError: Error | null = null;
-  try {
-    const response = await updateFirebaseOrderStatus(
-      { orderNumber, id: orderId },
-      "Completed",
-      buildTechnicianUpdatePayload("completed", note, {
-        estimatedCompletion: new Date().toISOString(),
-        scheduledEnd: new Date().toISOString(),
-      }),
-    );
-    emitLiveDataRefresh();
-    return response as Record<string, unknown>;
-  } catch {
-    // Continue to PHP fallback.
-  }
   for (const path of endpointCandidates) {
     for (const body of payloadCandidates) {
+      try {
+        const response = await postLegacyForm(path, body);
+        rememberCompletedStatus();
+        emitLiveDataRefresh();
+        return response;
+      } catch (error) {
+        const nextError = error instanceof Error ? error : new Error(String(error));
+        if (!lastError || /404/i.test(lastError.message)) {
+          lastError = nextError;
+        }
+      }
+
+      try {
+        const response = await phpPost<Record<string, unknown>>(path, body);
+        rememberCompletedStatus();
+        emitLiveDataRefresh();
+        return response;
+      } catch (error) {
+        const nextError = error instanceof Error ? error : new Error(String(error));
+        if (!lastError || /404/i.test(lastError.message)) {
+          lastError = nextError;
+        }
+      }
+
       try {
         const response = await apiRequest<Record<string, unknown>>(path, {
           method: "POST",
           body,
         });
+        rememberCompletedStatus();
         emitLiveDataRefresh();
         return response;
       } catch (error) {
-        lastError = error instanceof Error ? error : new Error(String(error));
+        const nextError = error instanceof Error ? error : new Error(String(error));
+        if (!lastError || /404/i.test(lastError.message)) {
+          lastError = nextError;
+        }
       }
     }
   }
@@ -747,7 +1478,7 @@ export async function startQueueProcessing(
   },
 ) {
   const endpoints = getApiEndpoints();
-  const scheduledStart = options?.scheduledStart || new Date().toISOString();
+  const scheduledStart = options?.scheduledStart || formatBackendTimestamp(new Date());
   const note =
     options?.note || "Technician started processing from the mobile app.";
   const candidates = [
@@ -780,22 +1511,19 @@ export async function startQueueProcessing(
     set_processing: true,
   });
 
+  const rememberProcessingStatus = () => {
+    rememberLiveOrderOverride({
+      queueId,
+      orderId,
+      orderNumber,
+      status: "processing",
+      scheduledStart,
+      scheduledEnd: options?.scheduledEnd,
+      estimatedCompletion: options?.scheduledEnd,
+    });
+  };
+
   let lastError: Error | null = null;
-  try {
-    const response = await updateFirebaseOrderStatus(
-      { orderNumber, id: orderId },
-      "Processing",
-      buildTechnicianUpdatePayload("processing_started", note, {
-        scheduledStart,
-        scheduledEnd: options?.scheduledEnd,
-        estimatedCompletion: options?.scheduledEnd,
-      }),
-    );
-    emitLiveDataRefresh();
-    return response as Record<string, unknown>;
-  } catch {
-    // Continue to PHP fallback.
-  }
   for (const path of candidates) {
     for (const payload of payloadCandidates) {
       try {
@@ -803,6 +1531,7 @@ export async function startQueueProcessing(
           method: "POST",
           body: payload,
         });
+        rememberProcessingStatus();
         emitLiveDataRefresh();
         return response;
       } catch (error) {

@@ -115,6 +115,7 @@ export function RoleContentPage({
       "approvals",
       "order-history",
       "users",
+      "queries",
       "equipment",
       "reports",
       "about",
@@ -178,7 +179,7 @@ export function RoleContentPage({
             <View style={[styles.heroAccent]} />
             {showHeaderBack ? (
               <Pressable
-                onPress={() => router.push(dashboardRoute)}
+                onPress={() => router.replace(dashboardRoute)}
                 style={styles.eyebrowRow}
               >
                 <View
@@ -235,9 +236,11 @@ export function RoleContentPage({
                 </Pressable>
               ) : null}
             </View>
-            <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
-              {subtitle}
-            </Text>
+            {subtitle?.trim() ? (
+              <Text style={[styles.subtitle, { color: theme.colors.textMuted }]}>
+                {subtitle}
+              </Text>
+            ) : null}
           </View>
           {children}
         </ScrollView>
@@ -255,7 +258,7 @@ export function RoleContentPage({
             <View style={[styles.heroAccent]} />
             {showHeaderBack ? (
               <Pressable
-                onPress={() => router.push(dashboardRoute)}
+                onPress={() => router.replace(dashboardRoute)}
                 style={styles.eyebrowRow}
               >
                 <View

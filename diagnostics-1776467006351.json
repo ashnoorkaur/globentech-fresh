@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-04-17T23:03:26.350Z",
+  "apiBase": "https://3-20-196-151.nip.io",
+  "serverStatus": "pass",
+  "endpoints": {
+    "login": {
+      "status": "pass",
+      "duration": 228,
+      "httpStatus": 200
+    },
+    "createOrder": {
+      "status": "pass",
+      "duration": 295,
+      "httpStatus": 200
+    },
+    "deactivateAccount": {
+      "status": "pass",
+      "duration": 277,
+      "httpStatus": 200
+    },
+    "contactForm": {
+      "status": "pass",
+      "duration": 285,
+      "httpStatus": 200
+    },
+    "adminQueue": {
+      "status": "pass",
+      "duration": 269,
+      "httpStatus": 200
+    }
+  },
+  "summary": {
+    "total": 5,
+    "passing": 5,
+    "warnings": 0,
+    "failures": 0
+  }
+}

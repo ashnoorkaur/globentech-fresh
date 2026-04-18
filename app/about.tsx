@@ -3,10 +3,10 @@ import { useMemo } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import {
-    adminMenu,
-    customerMenu,
-    guestMenu,
-    technicianMenu,
+  adminMenu,
+  customerMenu,
+  guestMenu,
+  technicianMenu,
 } from "../constants/role-menus";
 import { useSessionState } from "../lib/session-store";
 import { useAppTheme } from "../lib/theme";
@@ -140,13 +140,13 @@ export default function AboutPage() {
             Team Members
           </Text>
           <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
-            Bhavya Bhavya, Evan Di Placido,
+           Ashnoor Kaur, Ravneet Kaur, Ahmad Fakhry,
           </Text>
           <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
-            Ahmad Fakhry, Gaganpreet Kaur,
+            Justice Mazerolle, Gaganpreet Kaur,
           </Text>
           <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
-            Ashnoor Kaur, Justice Mazerolle, Ravneet Kaur
+           Bhavya Bhavya, Evan Di Placido
           </Text>
         </View>
 

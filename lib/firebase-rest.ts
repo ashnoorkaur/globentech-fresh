@@ -7,6 +7,7 @@ import type { CreateOrderPayload, CustomerOrderRow } from "./orders-api-enhanced
 
 const FIREBASE_API_KEY = "AIzaSyAqrrEiD7qMIWQ4Kduatkg5YOJUejYn0js";
 const FIREBASE_DB_URL = "https://globentech-e6551-default-rtdb.firebaseio.com";
+const FIREBASE_AUTH_ENABLED = true;
 
 type FirebaseSession = {
   uid: string;
@@ -150,6 +151,10 @@ const toStringArray = (value: unknown): string[] => {
 const buildOrderNumber = () => `ORD-${String(Date.now()).slice(-6)}`;
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  if (!FIREBASE_AUTH_ENABLED && /identitytoolkit\.googleapis\.com/i.test(url)) {
+    throw new Error("Firebase auth is disabled. Using PHP backend login.");
+  }
+
   const response = await fetch(url, init);
   const text = await response.text();
 
@@ -558,6 +563,7 @@ export async function fetchFirebaseCustomerOrders(user?: { firebase_uid?: string
 export async function createFirebaseOrder(
   payload: CreateOrderPayload,
   user?: { firebase_uid?: string; email?: string; full_name?: string },
+  submitted?: { id?: number; order_number?: string; firebase_key?: string },
 ) {
   const users = await readUsersMap();
   let uid = user?.firebase_uid || activeSession?.uid || "";
@@ -573,12 +579,10 @@ export async function createFirebaseOrder(
     }
   }
 
-  if (!uid) throw new Error("Firebase customer profile not found.");
-
   const newRefPayload = {
-    id: Date.now(),
-    orderNumber: buildOrderNumber(),
-    customerId: uid,
+    id: submitted?.id || Date.now(),
+    orderNumber: submitted?.order_number || buildOrderNumber(),
+    customerId: uid || undefined,
     customerEmail: user?.email || profile?.email || activeSession?.email || "",
     customerName: user?.full_name || profile?.name || profile?.full_name || "Customer",
     companyName: profile?.company || profile?.companyName || "",

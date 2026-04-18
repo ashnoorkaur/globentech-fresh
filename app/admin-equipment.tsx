@@ -106,6 +106,25 @@ export default function AdminEquipmentPage() {
     last_maintenance: lastMaintenance.trim() || undefined,
   });
 
+  const upsertEquipmentRow = (item: EquipmentPayload) => {
+    setEquipment((current) => {
+      const next = [...current];
+      const matchIndex = next.findIndex((row) => {
+        if (item.id && row.id && item.id === row.id) return true;
+        return row.name.trim().toLowerCase() === item.name.trim().toLowerCase();
+      });
+
+      if (matchIndex >= 0) {
+        next[matchIndex] = { ...next[matchIndex], ...item };
+      } else {
+        next.unshift(item);
+      }
+
+      return next.sort((left, right) => left.name.localeCompare(right.name));
+    });
+    setLastUpdated(new Date().toLocaleTimeString());
+  };
+
   const canSave = useMemo(() => {
     return (
       name.trim().length > 1 &&
@@ -127,13 +146,22 @@ export default function AdminEquipmentPage() {
     try {
       setFormBusy(true);
       setFormErrorText("");
-      await addEquipment(buildPayload());
+      const payload = buildPayload();
+      const result = await addEquipment(payload);
+      upsertEquipmentRow({
+        ...payload,
+        id:
+          payload.id ||
+          (result as { id?: number })?.id ||
+          (result as { equipment?: { id?: number } })?.equipment?.id ||
+          Date.now(),
+      });
       await loadEquipment();
       resetForm();
       setShowFormModal(false);
       feedback.showSuccess(
         "Equipment Added",
-        "New equipment was added successfully.",
+        "New equipment was added successfully and the list has been refreshed.",
       );
     } catch (error) {
       const message =
@@ -158,7 +186,9 @@ export default function AdminEquipmentPage() {
     try {
       setFormBusy(true);
       setFormErrorText("");
-      await updateEquipment(buildPayload(editingId));
+      const payload = buildPayload(editingId);
+      await updateEquipment(payload);
+      upsertEquipmentRow(payload);
       await loadEquipment();
       setEditingId(null);
       resetForm();

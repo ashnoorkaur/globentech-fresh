@@ -75,8 +75,10 @@ export const getApiBaseUrl = () => {
   const envBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL;
   const configBaseUrl = fromExpoExtra();
 
+  // Prefer the checked-in app config so the app stays pinned to the shared
+  // website backend even if a stale local env var still points elsewhere.
   const baseUrl =
-    envBaseUrl || configBaseUrl || "http://localhost/Capstone-project";
+    configBaseUrl || envBaseUrl || "https://3-20-196-151.nip.io";
   return normalizeBaseUrl(resolveRuntimeBaseUrl(baseUrl));
 };
 
@@ -226,4 +228,14 @@ export async function apiRequest<T>(
 
 export function clearApiCache() {
   responseCache.clear();
+}
+
+/** Drop cached GET responses whose cache key includes this substring (path segment). */
+export function clearApiCacheMatching(pathSubstring: string) {
+  const needle = pathSubstring.toLowerCase();
+  for (const key of Array.from(responseCache.keys())) {
+    if (key.toLowerCase().includes(needle)) {
+      responseCache.delete(key);
+    }
+  }
 }

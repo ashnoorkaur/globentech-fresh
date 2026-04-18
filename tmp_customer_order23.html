@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <base href="/">
+<script>window.__APP_BASE__ = "";</script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order Details - GlobenTech</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/admin.css">
+    <style>
+        .order-details-container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .order-details-card {
+            background: #fff;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        .order-meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-top: 12px;
+        }
+        .order-meta-item {
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 10px;
+            background: #f8fafc;
+        }
+        .order-meta-label {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 4px;
+            display: block;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .status-submitted { background: #fff3cd; color: #856404; }
+        .status-approved { background: #d1ecf1; color: #0c5460; }
+        .status-processing, .status-pending_approval, .status-payment_pending,
+        .status-payment_confirmed, .status-in_queue, .status-preparation_in_progress,
+        .status-testing_in_progress { background: #e7e3ff; color: #5a4fcf; }
+        .status-completed, .status-results_available { background: #d4edda; color: #155724; }
+        .status-rejected { background: #f8d7da; color: #721c24; }
+        .actions-row {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-top: 14px;
+        }
+    </style>
+</head>
+<body>
+    <header class="main-header">
+    <div class="header-content">
+        <div class="logo">
+            <a href="/dashboard/index.php">GlobenTech</a>
+        </div>
+
+        <nav class="main-nav">
+                                                <a href="/dashboard/index.php" class="">Dashboard</a>
+                    <a href="/orders/my-orders.php" class="">My Orders</a>
+                    <a href="/orders/order-history.php" class="">Order History</a>
+                    <a href="/orders/create-order.php" class="">New Order</a>
+                    <a href="/contact/index.php" class="">Contact Us</a>
+                                    </nav>
+
+        <div class="user-menu">
+                                                <span class="user-name">Test Customer</span>
+                                <a href="/account/settings.php" class="btn btn-small btn-account " style="margin-right:8px;">Account</a>
+                <a href="/auth/logout.php" class="btn btn-small">Logout</a>
+                    </div>
+    </div>
+</header>
+
+<!-- ================= CHATBOT START ================= -->
+
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+<div id="chatbot-button">
+    <span class="material-icons">chat</span>
+</div>
+
+<div id="chatbot-window">
+    <div id="chatbot-header">
+        <span>Virtual Assistant</span>
+        <span id="chatbot-close">&times;</span>
+    </div>
+
+    <div id="chatbot-messages">
+        <div id="quick-questions">
+            <div class="question">How do I approve orders?</div>
+            <div class="question">Where can I manage users?</div>
+            <div class="question">How do I manage equipment?</div>
+            <div class="question">Where can I view reports?</div>
+            <div class="question">How do I logout?</div>
+        </div>
+    </div>
+
+    <div id="chatbot-input-area">
+        <input type="text" id="chatbot-input" placeholder="Ask me something...">
+        <button id="chatbot-send">Send</button>
+    </div>
+</div>
+
+<link rel="stylesheet" href="/css/chat.css">
+<script>
+    window.__CHATBOT_AI_URL__ = "\/ai_reply.php";
+</script>
+<script type="module" src="/frontend/src/components/chatbot/chatbotWidget.js"></script>
+
+<!-- ================= CHATBOT END ================= -->
+
+    <div class="order-details-container">
+        <div class="order-details-card">
+            <h1>Order Details</h1>
+            <p>Review the latest status and sample information for your order.</p>
+
+                        
+            <div class="order-meta-grid">
+                <div class="order-meta-item">
+                    <span class="order-meta-label">Order Number</span>
+                    <strong>ORD-20260418-6904</strong>
+                </div>
+                <div class="order-meta-item">
+                    <span class="order-meta-label">Status</span>
+                    <span class="status-badge status-rejected">
+                        Rejected                    </span>
+                </div>
+                <div class="order-meta-item">
+                    <span class="order-meta-label">Priority</span>
+                    <strong>Standard</strong>
+                </div>
+                <div class="order-meta-item">
+                    <span class="order-meta-label">Created</span>
+                    <strong>Apr 18, 2026 01:01</strong>
+                </div>
+                <div class="order-meta-item">
+                    <span class="order-meta-label">Updated</span>
+                    <strong>Apr 18, 2026 13:00</strong>
+                </div>
+                <div class="order-meta-item">
+                    <span class="order-meta-label">Samples</span>
+                    <strong>1</strong>
+                </div>
+            </div>
+
+            <div class="actions-row">
+                <a href="/orders/my-orders.php" class="btn btn-secondary">Back to My Orders</a>
+                            </div>
+        </div>
+
+        <div class="admin-table-container">
+            <h2>Samples</h2>
+            <table class="admin-table">
+                <thead>
+                    <tr>
+                        <th>Sample #</th>
+                        <th>Compound</th>
+                        <th>Quantity</th>
+                        <th>Unit Cost</th>
+                        <th>Status</th>
+                    </tr>
+                </thead>
+                <tbody>
+                                                                        <tr>
+                                <td>23</td>
+                                <td>SYNCFIX-20260417190100</td>
+                                <td>2.00</td>
+                                <td>$150.00</td>
+                                <td>pending</td>
+                            </tr>
+                                                            </tbody>
+            </table>
+        </div>
+    </div>
+
+    <footer class="main-footer">
+    <div class="footer-content">
+        <div class="footer-section">
+            <h3>GlobenTech</h3>
+            <p>Laboratory Order Management System</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Project Information</h4>
+            <p>Course: Capstone Project</p>
+            <p>Final Project</p>
+            <p>SAIT - 2026</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Client</h4>
+            <p>GMJ Global Energy</p>
+            <p>Astra Agus Pramana</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Team Members</h4>
+            <p>Bhavya Bhavya, Evan Di Placido,</p>
+            <p>Ahmad Fakhry, Gaganpreet Kaur,</p>
+            <p>Ashnoor Kaur, Justice Mazerolle, Ravneet Kaur</p>
+        </div>
+    </div>
+
+    <div class="footer-bottom">
+        <p>&copy; 2026 GlobenTech. School Project - All rights reserved.</p>
+    </div>
+</footer>
+</body>
+</html>
+

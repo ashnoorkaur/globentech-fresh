@@ -15,7 +15,7 @@
  *  10.  Reports generate (POST)
  */
 
-const BASE_URL = "http://localhost/Capstone-project";
+const BASE_URL = process.env.API_BASE_URL || "https://3-20-196-151.nip.io";
 const FIREBASE_API_KEY = "AIzaSyAqrrEiD7qMIWQ4Kduatkg5YOJUejYn0js";
 const FIREBASE_DB_URL = "https://globentech-e6551-default-rtdb.firebaseio.com";
 

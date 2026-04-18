@@ -1,11 +1,15 @@
 import { router } from "expo-router";
 import { useMemo, useState } from "react";
 import {
+    Keyboard,
+    KeyboardAvoidingView,
+    Platform,
     Pressable,
     ScrollView,
     StyleSheet,
     Text,
     TextInput,
+    TouchableWithoutFeedback,
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
@@ -156,177 +160,191 @@ export default function SignupPage() {
         ]}
       />
 
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
+        style={{ flex: 1 }}
       >
-        <View
-          style={[
-            styles.card,
-            {
-              backgroundColor: theme.colors.surface,
-              borderColor: theme.colors.border,
-            },
-          ]}
-        >
-          <Text style={[styles.brand, { color: theme.colors.primary }]}>
-            GlobenTech
-          </Text>
-          <Text style={[styles.heading, { color: theme.colors.text }]}>
-            Create Account
-          </Text>
-          <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
-            Create your account and continue to login.
-          </Text>
-
-          <View
-            style={[
-              styles.section,
-              {
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.surfaceMuted,
-              },
-            ]}
+        <TouchableWithoutFeedback onPress={Keyboard.dismiss} accessible={false}>
+          <ScrollView
+            contentContainerStyle={styles.scrollContent}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            showsVerticalScrollIndicator={false}
           >
-            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-              Basic Information
-            </Text>
-            <TextInput
-              value={fullName}
-              onChangeText={setFullName}
-              placeholder="Full Name* (max 20)"
-              placeholderTextColor={theme.colors.textMuted}
+            <View
               style={[
-                styles.input,
+                styles.card,
                 {
-                  color: theme.colors.text,
+                  backgroundColor: theme.colors.surface,
                   borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
                 },
               ]}
-              maxLength={20}
-            />
-            <TextInput
-              value={email}
-              onChangeText={setEmail}
-              placeholder="Email* (max 30)"
-              placeholderTextColor={theme.colors.textMuted}
-              style={[
-                styles.input,
-                {
-                  color: theme.colors.text,
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
-                },
-              ]}
-              keyboardType="email-address"
-              autoCapitalize="none"
-              maxLength={30}
-            />
-            <TextInput
-              value={phone}
-              onChangeText={setPhone}
-              placeholder="Phone (digits only, max 15)"
-              placeholderTextColor={theme.colors.textMuted}
-              style={[
-                styles.input,
-                {
-                  color: theme.colors.text,
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
-                },
-              ]}
-              keyboardType="number-pad"
-              maxLength={15}
-            />
-            <TextInput
-              value={companyName}
-              onChangeText={setCompanyName}
-              placeholder="Company Name (max 35)"
-              placeholderTextColor={theme.colors.textMuted}
-              style={[
-                styles.input,
-                {
-                  color: theme.colors.text,
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
-                },
-              ]}
-              maxLength={35}
-            />
-            <TextInput
-              value={address}
-              onChangeText={setAddress}
-              placeholder="Address (max 45)"
-              placeholderTextColor={theme.colors.textMuted}
-              style={[
-                styles.input,
-                styles.textarea,
-                {
-                  color: theme.colors.text,
-                  borderColor: theme.colors.border,
-                  backgroundColor: theme.colors.inputBg,
-                },
-              ]}
-              maxLength={45}
-              multiline
-            />
-          </View>
+            >
+              <Text style={[styles.brand, { color: theme.colors.primary }]}>
+                GlobenTech
+              </Text>
+              <Text style={[styles.heading, { color: theme.colors.text }]}>
+                Create Account
+              </Text>
+              <Text style={[styles.copy, { color: theme.colors.textMuted }]}>
+                Create your account and continue to login.
+              </Text>
 
-          <View
-            style={[
-              styles.section,
-              {
-                borderColor: theme.colors.border,
-                backgroundColor: theme.colors.surfaceMuted,
-              },
-            ]}
-          >
-            <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
-              Security
-            </Text>
+              <View
+                style={[
+                  styles.section,
+                  {
+                    borderColor: theme.colors.border,
+                    backgroundColor: theme.colors.surfaceMuted,
+                  },
+                ]}
+              >
+                <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+                  Basic Information
+                </Text>
+                <TextInput
+                  value={fullName}
+                  onChangeText={setFullName}
+                  placeholder="Full Name* (max 20)"
+                  placeholderTextColor={theme.colors.textMuted}
+                  style={[
+                    styles.input,
+                    {
+                      color: theme.colors.text,
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.inputBg,
+                    },
+                  ]}
+                  maxLength={20}
+                  returnKeyType="next"
+                />
+                <TextInput
+                  value={email}
+                  onChangeText={setEmail}
+                  placeholder="Email* (max 30)"
+                  placeholderTextColor={theme.colors.textMuted}
+                  style={[
+                    styles.input,
+                    {
+                      color: theme.colors.text,
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.inputBg,
+                    },
+                  ]}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  maxLength={30}
+                  returnKeyType="next"
+                />
+                <TextInput
+                  value={phone}
+                  onChangeText={setPhone}
+                  placeholder="Phone (digits only, max 15)"
+                  placeholderTextColor={theme.colors.textMuted}
+                  style={[
+                    styles.input,
+                    {
+                      color: theme.colors.text,
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.inputBg,
+                    },
+                  ]}
+                  keyboardType="number-pad"
+                  maxLength={15}
+                  returnKeyType="next"
+                />
+                <TextInput
+                  value={companyName}
+                  onChangeText={setCompanyName}
+                  placeholder="Company Name (max 35)"
+                  placeholderTextColor={theme.colors.textMuted}
+                  style={[
+                    styles.input,
+                    {
+                      color: theme.colors.text,
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.inputBg,
+                    },
+                  ]}
+                  maxLength={35}
+                  returnKeyType="next"
+                />
+                <TextInput
+                  value={address}
+                  onChangeText={setAddress}
+                  placeholder="Address (max 45)"
+                  placeholderTextColor={theme.colors.textMuted}
+                  style={[
+                    styles.input,
+                    styles.textarea,
+                    {
+                      color: theme.colors.text,
+                      borderColor: theme.colors.border,
+                      backgroundColor: theme.colors.inputBg,
+                    },
+                  ]}
+                  maxLength={45}
+                  multiline
+                />
+              </View>
 
-            <PasswordField
-              value={password}
-              onChangeText={setPassword}
-              placeholder="Password* (6-35)"
-              maxLength={35}
-            />
+              <View
+                style={[
+                  styles.section,
+                  {
+                    borderColor: theme.colors.border,
+                    backgroundColor: theme.colors.surfaceMuted,
+                  },
+                ]}
+              >
+                <Text style={[styles.sectionTitle, { color: theme.colors.text }]}>
+                  Security
+                </Text>
 
-            <PasswordField
-              value={confirmPassword}
-              onChangeText={setConfirmPassword}
-              placeholder="Confirm Password*"
-              maxLength={35}
-            />
+                <PasswordField
+                  value={password}
+                  onChangeText={setPassword}
+                  placeholder="Password* (6-35)"
+                  maxLength={35}
+                />
 
-            <Text style={[styles.hint, { color: theme.colors.textMuted }]}>
-              Passwords must match and be 6-35 characters.
-            </Text>
-          </View>
+                <PasswordField
+                  value={confirmPassword}
+                  onChangeText={setConfirmPassword}
+                  placeholder="Confirm Password*"
+                  maxLength={35}
+                />
 
-          <Pressable
-            style={[
-              styles.registerBtn,
-              { backgroundColor: theme.colors.primary },
-            ]}
-            onPress={submit}
-          >
-            <Text style={styles.registerBtnText}>
-              {submitting ? "Registering..." : "Register"}
-            </Text>
-          </Pressable>
+                <Text style={[styles.hint, { color: theme.colors.textMuted }]}>
+                  Passwords must match and be 6-35 characters.
+                </Text>
+              </View>
 
-          <Pressable
-            onPress={() => router.replace("/login")}
-            style={styles.linkWrap}
-          >
-            <Text style={[styles.linkText, { color: theme.colors.secondary }]}>
-              Already have an account? Login here
-            </Text>
-          </Pressable>
-        </View>
-      </ScrollView>
+              <Pressable
+                style={[
+                  styles.registerBtn,
+                  { backgroundColor: theme.colors.primary },
+                ]}
+                onPress={submit}
+              >
+                <Text style={styles.registerBtnText}>
+                  {submitting ? "Registering..." : "Register"}
+                </Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => router.replace("/login")}
+                style={styles.linkWrap}
+              >
+                <Text style={[styles.linkText, { color: theme.colors.secondary }]}>
+                  Already have an account? Login here
+                </Text>
+              </Pressable>
+            </View>
+          </ScrollView>
+        </TouchableWithoutFeedback>
+      </KeyboardAvoidingView>
       {feedback.modal}
     </SafeAreaView>
   );
@@ -352,7 +370,12 @@ const styles = StyleSheet.create({
     bottom: -120,
     opacity: 0.38,
   },
-  scrollContent: { padding: 20, paddingTop: 32, paddingBottom: 32 },
+  scrollContent: {
+    flexGrow: 1,
+    padding: 20,
+    paddingTop: 32,
+    paddingBottom: 120,
+  },
   card: { borderWidth: 1, borderRadius: 20, padding: 16, gap: 10 },
   brand: {
     fontSize: 12,

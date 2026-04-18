@@ -2,6 +2,19 @@ import { useEffect, useState } from "react";
 
 const screenCache = new Map<string, unknown>();
 
+export function clearScreenCache(prefix?: string) {
+  if (!prefix) {
+    screenCache.clear();
+    return;
+  }
+
+  for (const key of Array.from(screenCache.keys())) {
+    if (key.startsWith(prefix)) {
+      screenCache.delete(key);
+    }
+  }
+}
+
 export function hasCachedScreenState(key: string) {
   return screenCache.has(key);
 }

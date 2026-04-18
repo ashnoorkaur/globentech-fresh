@@ -18,13 +18,13 @@ import fs from "fs";
 import fetch from "node-fetch";
 
 const API_BASE =
-  process.env.API_BASE_URL || "http://localhost/Capstone-project";
+  process.env.API_BASE_URL || "https://3-20-196-151.nip.io";
 const ENDPOINTS = {
-  login: "/login.php",
-  createOrder: "/api/customer-create-order.php",
-  deactivateAccount: "/api/account-deactivate-self.php",
-  contactForm: "/api/contact-send.php",
-  adminQueue: "/api/admin-pending-orders.php",
+  login: "/auth/login.php",
+  createOrder: "/orders/create-order.php",
+  deactivateAccount: "/account/settings.php",
+  contactForm: "/contact/index.php",
+  adminQueue: "/admin/approvals.php",
 };
 
 const COLORS = {

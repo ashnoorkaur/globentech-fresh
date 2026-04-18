@@ -1,0 +1,43 @@
+{
+  "timestamp": "2026-04-17T23:03:08.097Z",
+  "apiBase": "https://3-20-196-151.nip.io",
+  "serverStatus": "pass",
+  "endpoints": {
+    "login": {
+      "status": "fail",
+      "duration": 193,
+      "httpStatus": 404,
+      "reason": "not_found"
+    },
+    "createOrder": {
+      "status": "fail",
+      "duration": 61,
+      "httpStatus": 404,
+      "reason": "not_found"
+    },
+    "deactivateAccount": {
+      "status": "fail",
+      "duration": 64,
+      "httpStatus": 404,
+      "reason": "not_found"
+    },
+    "contactForm": {
+      "status": "fail",
+      "duration": 62,
+      "httpStatus": 404,
+      "reason": "not_found"
+    },
+    "adminQueue": {
+      "status": "fail",
+      "duration": 65,
+      "httpStatus": 404,
+      "reason": "not_found"
+    }
+  },
+  "summary": {
+    "total": 5,
+    "passing": 0,
+    "warnings": 0,
+    "failures": 5
+  }
+}

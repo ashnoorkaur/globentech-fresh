@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <base href="/">
+<script>window.__APP_BASE__ = "";</script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Order History - GlobenTech</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/admin.css">
+    <!-- <style>
+        .orders-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .orders-header { background: white; border-radius: 10px; padding: 25px 30px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .orders-header h1 { color: #333; margin-bottom: 5px; }
+        .orders-header p { color: #666; margin: 0; }
+        .search-form { background: white; border-radius: 10px; padding: 20px 25px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .search-form form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+        .search-form label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
+        .search-form input[type="text"], .search-form input[type="date"] { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; min-width: 140px; }
+        .search-form button { padding: 8px 20px; background: #667eea; color: white; border: none; border-radius: 6px; cursor: pointer; }
+        .search-form button[type="reset"] { background: #6c757d; }
+        .history-section { background: white; border-radius: 10px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .history-section h2 { color: #333; margin-bottom: 15px; font-size: 18px; }
+        .admin-table-container { overflow-x: auto; }
+        .admin-table { width: 100%; border-collapse: collapse; }
+        .admin-table th, .admin-table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        .admin-table th { background: #f8f9fa; font-weight: 600; color: #333; }
+        .status-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+        .status-results_available, .status-completed { background: #d4edda; color: #155724; }
+        .badge-standard { background: #e9ecef; color: #495057; }
+        .badge-prioritized { background: #fff3cd; color: #856404; }
+        .empty-history { text-align: center; padding: 40px 20px; color: #666; }
+    </style> -->
+
+    <style>
+    .orders-container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+    .orders-header { background: white; border-radius: 10px; padding: 25px 30px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .orders-header h1 { color: #333; margin-bottom: 5px; }
+    .orders-header p { color: #666; margin: 0; }
+
+    .search-form { background: white; border-radius: 10px; padding: 20px 25px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .search-form form { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
+    .search-form label { display: block; font-size: 12px; color: #666; margin-bottom: 4px; }
+
+    .search-form input[type="text"],
+    .search-form input[type="date"],
+    .search-form select {
+        padding: 8px 12px;
+        border: 1px solid #ddd;
+        border-radius: 6px;
+        min-width: 140px;
+        background: #fff;
+    }
+
+    .search-form button {
+        padding: 8px 20px;
+        background: #667eea;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+
+    .search-form button:hover {
+        opacity: 0.95;
+    }
+
+    .search-form .btn-clear {
+        background: #ef4444;
+        color: white;
+    }
+
+    .search-form .btn-clear:hover {
+        background: #dc2626;
+    }
+
+    .history-section { background: white; border-radius: 10px; padding: 25px; margin-bottom: 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+    .history-section h2 { color: #333; margin-bottom: 15px; font-size: 18px; }
+    .admin-table-container { overflow-x: auto; }
+    .admin-table { width: 100%; border-collapse: collapse; }
+    .admin-table th, .admin-table td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+    .admin-table th { background: #f8f9fa; font-weight: 600; color: #333; }
+
+    .status-badge { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+    .status-results_available, .status-completed { background: #d4edda; color: #155724; }
+    .badge-standard { background: #e9ecef; color: #495057; }
+    .badge-prioritized { background: #fff3cd; color: #856404; }
+
+    .empty-history { text-align: center; padding: 40px 20px; color: #666; }
+</style>
+</head>
+<body>
+    <header class="main-header">
+    <div class="header-content">
+        <div class="logo">
+            <a href="/dashboard/index.php">GlobenTech</a>
+        </div>
+
+        <nav class="main-nav">
+                                                <a href="/dashboard/index.php" class="">Dashboard</a>
+                    <a href="/orders/my-orders.php" class="">My Orders</a>
+                    <a href="/orders/order-history.php" class="">Order History</a>
+                    <a href="/orders/create-order.php" class="">New Order</a>
+                    <a href="/contact/index.php" class="">Contact Us</a>
+                                    </nav>
+
+        <div class="user-menu">
+                                                <span class="user-name">Test Customer</span>
+                                <a href="/account/settings.php" class="btn btn-small btn-account " style="margin-right:8px;">Account</a>
+                <a href="/auth/logout.php" class="btn btn-small">Logout</a>
+                    </div>
+    </div>
+</header>
+
+<!-- ================= CHATBOT START ================= -->
+
+<link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+<div id="chatbot-button">
+    <span class="material-icons">chat</span>
+</div>
+
+<div id="chatbot-window">
+    <div id="chatbot-header">
+        <span>Virtual Assistant</span>
+        <span id="chatbot-close">&times;</span>
+    </div>
+
+    <div id="chatbot-messages">
+        <div id="quick-questions">
+            <div class="question">How do I approve orders?</div>
+            <div class="question">Where can I manage users?</div>
+            <div class="question">How do I manage equipment?</div>
+            <div class="question">Where can I view reports?</div>
+            <div class="question">How do I logout?</div>
+        </div>
+    </div>
+
+    <div id="chatbot-input-area">
+        <input type="text" id="chatbot-input" placeholder="Ask me something...">
+        <button id="chatbot-send">Send</button>
+    </div>
+</div>
+
+<link rel="stylesheet" href="/css/chat.css">
+<script>
+    window.__CHATBOT_AI_URL__ = "\/ai_reply.php";
+</script>
+<script type="module" src="/frontend/src/components/chatbot/chatbotWidget.js"></script>
+
+<!-- ================= CHATBOT END ================= -->
+
+    <div class="orders-container">
+        <div class="orders-header">
+            <h1>Order History</h1>
+            <p>Your completed orders</p>
+        </div>
+
+        <div class="search-form">
+            <form method="get" action="/orders/order-history.php">
+                                    
+                    <div>
+                        <label>Order number</label>
+                        <input 
+                        type="text" 
+                        name="order_number" 
+                        value="" 
+                        placeholder="e.g. ORD-"
+                        maxlength="20"
+                        >
+                    </div>
+                    
+                <div>
+                    <label>From date</label>
+                    <input type="date" name="date_from" value="">
+                </div>
+                <!-- <div>
+                    <label>To date</label>
+                    <input type="date" name="date_to" value="">
+                </div> -->
+                
+                <div>
+                    <label>To date</label>
+                    <input type="date" name="date_to" value="">
+                </div>
+                
+                <div>
+                    <label>Date range</label>
+                    <select name="quick_range" id="quick_range">
+                        <option value="">Custom</option>
+                        <option value="7days">Last 7 days</option>
+                        <option value="30days">Last 30 days</option>
+                        <option value="6months">Last 6 months</option>
+                        <option value="1year">Last 1 year</option>
+                    </select>
+                </div>
+
+                <div>
+                    <button type="submit">Search</button>
+                    <button type="reset" onclick="window.location='orders/order-history.php';">Clear</button>
+                </div>
+                
+            </form>
+        </div>
+
+                                <div class="history-section">
+                <h2>Prioritized orders</h2>
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Order #</th>
+                                                                <th>Completed / Date</th>
+                                <th>Samples</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                                                        <tr>
+                                <td>ORD-20260414-8018</td>
+                                                                <td>Apr 18, 2026 08:30</td>
+                                <td>1</td>
+                                <td><span class="status-badge status-results_available">Results available</span></td>
+                            </tr>
+                                                    </tbody>
+                    </table>
+                </div>
+            </div>
+            
+                        <div class="history-section">
+                <h2>Standard orders</h2>
+                <div class="admin-table-container">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Order #</th>
+                                                                <th>Completed / Date</th>
+                                <th>Samples</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                                                        <tr>
+                                <td>ORD-20260414-9658</td>
+                                                                <td>Apr 18, 2026 08:53</td>
+                                <td>1</td>
+                                <td><span class="status-badge status-results_available">Results available</span></td>
+                            </tr>
+                                                    </tbody>
+                    </table>
+                </div>
+            </div>
+                        </div>
+
+    <footer class="main-footer">
+    <div class="footer-content">
+        <div class="footer-section">
+            <h3>GlobenTech</h3>
+            <p>Laboratory Order Management System</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Project Information</h4>
+            <p>Course: Capstone Project</p>
+            <p>Final Project</p>
+            <p>SAIT - 2026</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Client</h4>
+            <p>GMJ Global Energy</p>
+            <p>Astra Agus Pramana</p>
+        </div>
+
+        <div class="footer-section">
+            <h4>Team Members</h4>
+            <p>Bhavya Bhavya, Evan Di Placido,</p>
+            <p>Ahmad Fakhry, Gaganpreet Kaur,</p>
+            <p>Ashnoor Kaur, Justice Mazerolle, Ravneet Kaur</p>
+        </div>
+    </div>
+
+    <div class="footer-bottom">
+        <p>&copy; 2026 GlobenTech. School Project - All rights reserved.</p>
+    </div>
+</footer>
+    <script type="module" src="frontend/src/pages/orders/orderHistory.js"></script>
+</body>
+</html>
+
+

@@ -1,13 +1,13 @@
 import { router } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  ActivityIndicator,
-  Pressable,
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  View,
+    ActivityIndicator,
+    Pressable,
+    StyleSheet,
+    Text,
+    View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { WebView } from "react-native-webview";
 import type { WebViewErrorEvent } from "react-native-webview/lib/WebViewTypes";
 import { MenuItem } from "../constants/role-menus";
@@ -286,8 +286,36 @@ const mapBackendUrlToNativeRoute = (requestUrl: string, baseUrl: string) => {
     const path = parsed.pathname.toLowerCase();
     const tab = (parsed.searchParams.get("tab") || "").toLowerCase();
 
-    if (path.endsWith("/contact.php")) {
+    if (path.endsWith("/contact.php") || path.endsWith("/contact/index.php")) {
       return "/customer-contact";
+    }
+
+    if (path.endsWith("/orders/create-order.php")) {
+      return "/customer-new-order";
+    }
+
+    if (path.endsWith("/orders/my-orders.php")) {
+      return "/customer-my-orders";
+    }
+
+    if (path.endsWith("/admin/approvals.php")) {
+      return "/admin-approvals";
+    }
+
+    if (path.endsWith("/admin/users.php")) {
+      return "/admin-users";
+    }
+
+    if (path.endsWith("/admin/equipment.php")) {
+      return "/admin-equipment";
+    }
+
+    if (path.endsWith("/admin/reports.php")) {
+      return "/admin-reports";
+    }
+
+    if (path.endsWith("/calendar/index.php")) {
+      return "/admin-calendar";
     }
 
     if (path.endsWith("/admin.php")) {

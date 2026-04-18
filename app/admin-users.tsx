@@ -24,6 +24,7 @@ import {
     type ProfileDto,
 } from "../lib/account-api";
 import { fetchAdminUsers } from "../lib/admin-api";
+import { formatBackendDateTime } from "../lib/date-time";
 import { useAppTheme } from "../lib/theme";
 
 const roles: ProfileDto["role"][] = ["customer", "technician", "administrator"];
@@ -50,7 +51,7 @@ export default function AdminUsersPage() {
   const theme = useAppTheme();
   const feedback = useFeedbackModal();
   const [users, setUsers] = useCachedScreenState<ManagedUser[]>(
-    "admin-users:users",
+    "admin-users:users:v2",
     [],
   );
   const [search, setSearch] = useState("");
@@ -69,7 +70,7 @@ export default function AdminUsersPage() {
   const [roleFilterOpen, setRoleFilterOpen] = useState(false);
   const [statusFilterOpen, setStatusFilterOpen] = useState(false);
   const [loading, setLoading] = useState(
-    () => !hasCachedScreenState("admin-users:users"),
+    () => !hasCachedScreenState("admin-users:users:v2"),
   );
   const [errorText, setErrorText] = useState("");
   const [rolePickerId, setRolePickerId] = useState<number | null>(null);
@@ -218,7 +219,7 @@ export default function AdminUsersPage() {
   return (
     <RoleContentPage
       title="Manage Users"
-      subtitle="All website users are listed here for role and account status control."
+      subtitle="All users are listed here for role and account status control."
       activeKey="users"
       menuItems={adminMenu}
       dashboardRoute="/admin-dashboard"
@@ -593,23 +594,23 @@ export default function AdminUsersPage() {
                     ID: {user.id}
                   </Text>
                 </View>
-                {user.last_login && (
+                {user.last_login ? (
                   <Text
                     style={[
                       styles.lastLoginText,
                       { color: theme.colors.textMuted },
                     ]}
                   >
-                    {new Date(user.last_login).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                      year: "2-digit",
-                    })}{" "}
-                    {new Date(user.last_login).toLocaleTimeString(undefined, {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                      second: "2-digit",
-                    })}
+                    Last Login: {formatBackendDateTime(user.last_login, "Never")}
+                  </Text>
+                ) : (
+                  <Text
+                    style={[
+                      styles.lastLoginText,
+                      { color: theme.colors.textMuted },
+                    ]}
+                  >
+                    Last Login: Never
                   </Text>
                 )}
               </View>
@@ -966,7 +967,8 @@ const styles = StyleSheet.create({
   // Meta Information
   metaInfo: {
     flexDirection: "row",
-    alignItems: "center",
+    alignItems: "flex-start",
+    flexWrap: "wrap",
     gap: 10,
   },
   roleTag: {
@@ -991,6 +993,9 @@ const styles = StyleSheet.create({
   lastLoginText: {
     fontSize: 11,
     fontWeight: "400",
+    flexShrink: 1,
+    width: "100%",
+    lineHeight: 16,
   },
 
   // Role Section

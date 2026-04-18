@@ -51,6 +51,7 @@ export default function CustomerContactPage() {
       const result = await submitContactForm({
         name: name.trim(),
         email: email.trim(),
+        order_number: orderNumber.trim() || undefined,
         subject: subject.trim(),
         message: message.trim(),
         category: orderNumber.trim() ? "order" : "general",

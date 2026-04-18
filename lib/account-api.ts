@@ -1,13 +1,5 @@
 import { apiRequest, getApiBaseUrlCandidates } from "./api-client";
 import { getApiEndpoints } from "./backend-endpoints";
-import {
-    fetchFirebaseAdminUserProfiles,
-    fetchFirebaseProfileByEmail,
-    fetchFirebaseSessionProfile,
-    updateFirebaseProfile,
-    updateFirebaseUserActive,
-    updateFirebaseUserRole
-} from "./firebase-rest";
 import { emitLiveDataRefresh } from "./live-data";
 import { getWebRoutes } from "./web-routes";
 
@@ -197,7 +189,6 @@ const parseLegacyProfile = (html: string): ProfileDto => {
     extractInputValue(html, "full_name") ||
     extractInputValue(html, "name") ||
     extractLabeledValue(html, "Full Name") ||
-    extractLabeledValue(html, "Name") ||
     deriveNameFromEmail(email);
   const phone =
     extractInputValue(html, "phone") || extractLabeledValue(html, "Phone");
@@ -211,16 +202,31 @@ const parseLegacyProfile = (html: string): ProfileDto => {
   const idValue =
     extractInputValue(html, "user_id") ||
     extractInputValue(html, "id") ||
-    extractLabeledValue(html, "User ID") ||
-    extractLabeledValue(html, "ID");
-  const roleValue =
+    extractLabeledValue(html, "User ID");
+  const explicitRole =
+    html.match(/role-badge\s+role-(customer|technician|administrator)/i)?.[1] ||
     html.match(
-      /<option[^>]*selected[^>]*value=["'](customer|technician|administrator|admin|tech)["'][^>]*>/i,
+      /<option[^>]*selected[^>]*value=["'](customer|technician|administrator|admin|tech)["']/i,
     )?.[1] ||
     extractInputValue(html, "role") ||
     extractLabeledValue(html, "Role");
+  const roleValue =
+    explicitRole ||
+    (/\/orders\/(my-orders|create-order)\.php/i.test(html)
+      ? "customer"
+      : /\/calendar\/index\.php/i.test(html)
+        ? "technician"
+        : /\/admin\/(approvals|users|equipment|reports)\.php/i.test(html)
+          ? "administrator"
+          : email.toLowerCase().includes("admin")
+            ? "administrator"
+            : email.toLowerCase().includes("tech")
+              ? "technician"
+              : "customer");
   const statusValue =
-    extractLabeledValue(html, "Status") || extractLabeledValue(html, "Active");
+    extractInputValue(html, "is_active") ||
+    extractLabeledValue(html, "Account Status") ||
+    extractLabeledValue(html, "Status");
 
   const id = Number(String(idValue).match(/\d+/)?.[0] || "0");
   if (!email && !fullName && !id) {
@@ -237,7 +243,7 @@ const parseLegacyProfile = (html: string): ProfileDto => {
     company_name: companyName,
     address,
     role: normalizeProfileRole(roleValue),
-    is_active: statusValue ? /active|enabled|yes/i.test(statusValue) : true,
+    is_active: statusValue ? !/inactive|disabled|no/i.test(statusValue) : true,
   };
 };
 
@@ -433,12 +439,6 @@ export async function fetchMyProfile() {
   const endpoints = getApiEndpoints();
 
   try {
-    return await fetchFirebaseSessionProfile();
-  } catch {
-    // continue
-  }
-
-  try {
     const response = await apiRequest<ProfileDto | SuccessEnvelope<ProfileDto>>(
       endpoints.accountProfile,
     );
@@ -451,6 +451,7 @@ export async function fetchMyProfile() {
         full_name:
           (!isRolePlaceholderName(rawName) && rawName) ||
           deriveNameFromEmail(profile.email || ""),
+        is_active: profile.is_active !== false,
       };
     }
   } catch {
@@ -458,7 +459,16 @@ export async function fetchMyProfile() {
   }
 
   const html = await fetchLegacyProfilePage();
-  return parseLegacyProfile(html);
+  const legacyProfile = parseLegacyProfile(html);
+  const rawName = (legacyProfile.full_name || "").trim();
+  return {
+    ...legacyProfile,
+    role: normalizeProfileRole(legacyProfile.role),
+    full_name:
+      (!isRolePlaceholderName(rawName) && rawName) ||
+      deriveNameFromEmail(legacyProfile.email || ""),
+    is_active: legacyProfile.is_active !== false,
+  };
 }
 
 const postLegacyProfileUpdate = async (
@@ -550,27 +560,6 @@ const postLegacyProfileUpdate = async (
 
 export async function updateMyProfile(payload: ProfileUpdatePayload) {
   const endpoints = getApiEndpoints();
-
-  try {
-    const result = await updateFirebaseProfile(payload);
-    emitLiveDataRefresh();
-    return result;
-  } catch {
-    // If the Firebase session is missing but we can still resolve the current
-    // profile via backend session cookies, restore the Firebase session by
-    // email and retry there before falling back to PHP endpoints.
-    try {
-      const profile = await fetchMyProfile();
-      if (profile.email) {
-        await fetchFirebaseProfileByEmail(profile.email);
-        const result = await updateFirebaseProfile(payload);
-        emitLiveDataRefresh();
-        return result;
-      }
-    } catch {
-      // Continue to API/PHP fallback.
-    }
-  }
 
   try {
     const result = await apiRequest<{ success?: boolean; message?: string }>(
@@ -708,12 +697,6 @@ export async function deactivateSelfAccount() {
 export async function fetchAdminUserList() {
   const endpoints = getApiEndpoints();
 
-  try {
-    return await fetchFirebaseAdminUserProfiles();
-  } catch {
-    // continue
-  }
-
   const loadFromLegacy = async () => {
     const html = await fetchLegacyUsersPage();
     return parseLegacyUsers(html);
@@ -746,13 +729,6 @@ export async function adminChangeRole(
 ) {
   const endpoints = getApiEndpoints();
   try {
-    const response = await updateFirebaseUserRole(userId, role);
-    emitLiveDataRefresh();
-    return response;
-  } catch {
-    // continue
-  }
-  try {
     const response = await apiRequest<{ success?: boolean; message?: string }>(
       endpoints.accountAdminChangeRole,
       {
@@ -775,13 +751,6 @@ export async function adminChangeRole(
 
 export async function adminDeactivateUser(userId: number) {
   const endpoints = getApiEndpoints();
-  try {
-    const response = await updateFirebaseUserActive(userId, false);
-    emitLiveDataRefresh();
-    return response;
-  } catch {
-    // continue
-  }
   const response = await apiRequest<{ success?: boolean; message?: string }>(
     endpoints.accountAdminDeactivateUser,
     {
@@ -798,13 +767,6 @@ export async function adminDeactivateUser(userId: number) {
 
 export async function adminActivateUser(userId: number) {
   const endpoints = getApiEndpoints();
-  try {
-    const response = await updateFirebaseUserActive(userId, true);
-    emitLiveDataRefresh();
-    return response;
-  } catch {
-    // continue
-  }
   const response = await apiRequest<{ success?: boolean; message?: string }>(
     endpoints.accountAdminActivateUser,
     {

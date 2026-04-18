@@ -1,14 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
+import { useLocalSearchParams } from "expo-router";
 import { useCallback, useMemo, useState } from "react";
-import {
-    Modal,
-    Pressable,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    View,
-} from "react-native";
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { GradientButton } from "../components/ui/gradient-button";
 import { adminMenu } from "../constants/role-menus";
@@ -23,19 +16,88 @@ import {
     type AdminUserDto,
 } from "../lib/admin-api";
 import { assignOrderEquipment } from "../lib/calendar-api";
+import { formatBackendDateTime } from "../lib/date-time";
 import { fetchEquipmentList, type EquipmentPayload } from "../lib/equipment-api";
+import { toLifecycleStatus } from "../lib/order-workflow";
 import { useAppTheme } from "../lib/theme";
 
 const formatDate = (value?: string | null) => {
-  if (!value) return "-";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return d.toLocaleString();
+  return formatBackendDateTime(value, "-");
+};
+
+const hasValue = (value?: string | number | null) => {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "number") return Number.isFinite(value) && value > 0;
+  return value.trim().length > 0 && value.trim() !== "-";
+};
+
+const formatDisplayCase = (value?: string | null) => {
+  if (!value) return "";
+  return value.trim().replace(/\b[a-z]/g, (char) => char.toUpperCase());
+};
+
+const formatQuantityText = (quantity?: number, unit?: string | null, sampleCount?: number) => {
+  if (typeof quantity === "number" && Number.isFinite(quantity) && quantity > 0) {
+    return `${quantity} ${unit || ""}`.trim();
+  }
+  if (typeof sampleCount === "number" && sampleCount > 1) {
+    return `${sampleCount} sample(s)`;
+  }
+  return "Not provided";
+};
+
+const getRequestSummary = (row: AdminOrderHistoryDto) => {
+  const parts = [
+    hasValue(row.sample_type) ? `Type: ${formatDisplayCase(row.sample_type)}` : null,
+    hasValue(row.compound_name) ? `Compound: ${formatDisplayCase(row.compound_name)}` : null,
+    `Quantity: ${formatQuantityText(row.quantity, row.unit, displaySampleCount(row))}`,
+  ].filter(Boolean);
+
+  return parts.join(" • ") || "Customer request synced from submitted order.";
+};
+
+const canAssignTechnician = (status?: string | null) => {
+  const lifecycle = toLifecycleStatus(status);
+  return (
+    lifecycle === "in_queue" ||
+    lifecycle === "testing" ||
+    lifecycle === "preparation" ||
+    lifecycle === "results_available"
+  );
+};
+
+const canAssignEquipment = (status?: string | null) => {
+  const lifecycle = toLifecycleStatus(status);
+  return (
+    lifecycle === "approved" ||
+    lifecycle === "payment_pending" ||
+    lifecycle === "in_queue" ||
+    lifecycle === "testing" ||
+    lifecycle === "preparation" ||
+    lifecycle === "results_available"
+  );
+};
+
+const displaySampleCount = (row: AdminOrderHistoryDto) => {
+  if (typeof row.sample_count === "number" && row.sample_count > 1) {
+    return row.sample_count;
+  }
+  if (
+    typeof row.quantity === "number" &&
+    Number.isFinite(row.quantity) &&
+    row.quantity >= 1 &&
+    row.quantity <= 50 &&
+    Math.abs(row.quantity - Math.round(row.quantity)) < 0.0001
+  ) {
+    return Math.round(row.quantity);
+  }
+  return row.sample_count || 1;
 };
 
 type NormalizedStage =
   | "submitted"
   | "approved"
+  | "payment"
   | "processing"
   | "completed"
   | "rejected";
@@ -44,6 +106,7 @@ const normalizeStage = (value?: string | null): NormalizedStage => {
   const s = (value || "").toLowerCase();
   if (s.includes("reject")) return "rejected";
   if (s.includes("complete") || s.includes("result")) return "completed";
+  if (s.includes("payment")) return "payment";
   if (s.includes("process") || s.includes("test") || s.includes("prep")) {
     return "processing";
   }
@@ -53,7 +116,8 @@ const normalizeStage = (value?: string | null): NormalizedStage => {
 
 const stageMeaning = (stage: NormalizedStage) => {
   if (stage === "submitted") return "Waiting for admin review.";
-  if (stage === "approved") return "Approved and ready for technician assignment.";
+  if (stage === "approved") return "Approved by admin.";
+  if (stage === "payment") return "Customer payment is pending before technician work begins.";
   if (stage === "processing") return "Technician is handling the order.";
   if (stage === "completed") return "Technician finished the order and the workflow is complete.";
   return "Order was rejected.";
@@ -62,86 +126,109 @@ const stageMeaning = (stage: NormalizedStage) => {
 const stageStep = (stage: NormalizedStage) => {
   if (stage === "submitted") return 1;
   if (stage === "approved") return 2;
-  if (stage === "processing") return 3;
-  if (stage === "completed") return 4;
+  if (stage === "payment") return 3;
+  if (stage === "processing") return 4;
+  if (stage === "completed") return 5;
   return 0;
 };
 
-const rowStatusForAssignment = (status?: string | null) => {
-  const stage = normalizeStage(status);
-  if (stage === "processing") return "Processing";
-  if (stage === "completed") return "Completed";
-  if (stage === "rejected") return "Rejected";
-  return "Approved";
-};
+const adminHistoryRowsFingerprint = (rows: AdminOrderHistoryDto[]) =>
+  rows
+    .map((r) =>
+      [
+        r.id,
+        (r.order_number || "").trim().toUpperCase(),
+        (r.status || "").trim().toLowerCase(),
+        (r.priority || "").trim().toLowerCase(),
+      ].join("\t"),
+    )
+    .sort()
+    .join("|");
 
 export default function AdminOrderHistoryPage() {
   const theme = useAppTheme();
   const feedback = useFeedbackModal();
+  const params = useLocalSearchParams<{ search?: string }>();
   const [rows, setRows] = useCachedScreenState<AdminOrderHistoryDto[]>(
-    "admin-order-history:rows",
+    "admin-order-history:rows:v10",
     [],
   );
   const [technicians, setTechnicians] = useCachedScreenState<AdminUserDto[]>(
-    "admin-order-history:technicians",
+    "admin-order-history:technicians:v1",
     [],
   );
-  const [equipmentOptions, setEquipmentOptions] = useCachedScreenState<
-    EquipmentPayload[]
-  >("admin-order-history:equipment", []);
-  const [search, setSearch] = useState("");
+  const [equipmentRows, setEquipmentRows] = useCachedScreenState<EquipmentPayload[]>(
+    "admin-order-history:equipment:v1",
+    [],
+  );
+  const [search, setSearch] = useState(
+    typeof params.search === "string" ? params.search : "",
+  );
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
   const [statusFilter, setStatusFilter] = useState<
-    "all" | "completed" | "processing" | "pending" | "approved" | "rejected"
+    "all" | "completed" | "processing" | "payment" | "pending" | "approved" | "rejected"
   >("all");
   const [draftStatusFilter, setDraftStatusFilter] = useState<
-    "all" | "completed" | "processing" | "pending" | "approved" | "rejected"
+    "all" | "completed" | "processing" | "payment" | "pending" | "approved" | "rejected"
   >("all");
   const [statusOpen, setStatusOpen] = useState(false);
   const [lastUpdated, setLastUpdated] = useCachedScreenState(
-    "admin-order-history:lastUpdated",
+    "admin-order-history:lastUpdated:v10",
     "",
   );
-  const [assignTarget, setAssignTarget] = useState<AdminOrderHistoryDto | null>(
-    null,
-  );
-  const [equipmentTarget, setEquipmentTarget] = useState<AdminOrderHistoryDto | null>(
-    null,
-  );
-  const [assignBusyId, setAssignBusyId] = useState<number | null>(null);
+  const [busyOrderId, setBusyOrderId] = useState<number | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [technicianTarget, setTechnicianTarget] = useState<AdminOrderHistoryDto | null>(null);
+  const [equipmentTarget, setEquipmentTarget] = useState<AdminOrderHistoryDto | null>(null);
 
   const loadHistory = useCallback(async () => {
+    setSyncing(true);
     try {
-      const [historyResult, techniciansResult, equipmentResult] = await Promise.allSettled([
+      const [historyResult, usersResult, equipmentResult] = await Promise.allSettled([
         fetchAdminOrderHistory(),
-        fetchAdminUsers({ role: "technician", status: "active" }),
+        fetchAdminUsers(),
         fetchEquipmentList(),
       ]);
 
       if (historyResult.status === "fulfilled") {
-        setRows(historyResult.value);
+        const next = historyResult.value;
+        setRows((prev) => {
+          if (adminHistoryRowsFingerprint(prev) === adminHistoryRowsFingerprint(next)) {
+            return prev;
+          }
+          queueMicrotask(() => setLastUpdated(new Date().toLocaleTimeString()));
+          return next;
+        });
       }
 
-      if (techniciansResult.status === "fulfilled") {
+      if (usersResult.status === "fulfilled") {
         setTechnicians(
-          techniciansResult.value.filter(
-            (item) => item.role === "technician" && item.is_active,
+          usersResult.value.filter(
+            (user) => user.role === "technician" && user.is_active !== false,
           ),
         );
       }
 
       if (equipmentResult.status === "fulfilled") {
-        setEquipmentOptions(equipmentResult.value);
+        setEquipmentRows(equipmentResult.value);
       }
-
-      setLastUpdated(new Date().toLocaleTimeString());
     } catch {
       // Keep the last successful snapshot visible.
+    } finally {
+      setSyncing(false);
     }
-  }, [setEquipmentOptions, setLastUpdated, setRows, setTechnicians]);
+  }, [setEquipmentRows, setLastUpdated, setRows, setTechnicians]);
 
-  useFocusedPolling(loadHistory, { intervalMs: 10000, minGapMs: 250 });
+  useFocusedPolling(loadHistory, {
+    intervalMs: 0,
+    minGapMs: 400,
+    subscribeToLiveData: false,
+    pollWhileFocused: false,
+    reloadOnAppActive: false,
+    runOnMount: false,
+    runOnFocus: true,
+  });
 
   const filtered = useMemo(() => {
     return rows.filter((row) => {
@@ -200,6 +287,9 @@ export default function AdminOrderHistoryPage() {
     const approved = rows.filter(
       (r) => normalizeStage(r.status) === "approved",
     ).length;
+    const payment = rows.filter(
+      (r) => normalizeStage(r.status) === "payment",
+    ).length;
     const processing = rows.filter(
       (r) => normalizeStage(r.status) === "processing",
     ).length;
@@ -209,110 +299,80 @@ export default function AdminOrderHistoryPage() {
     const rejected = rows.filter(
       (r) => normalizeStage(r.status) === "rejected",
     ).length;
-    const assigned = rows.filter((r) => Boolean(r.assigned_technician_name)).length;
-    const unassignedActive = rows.filter((r) => {
-      const stage = normalizeStage(r.status);
-      return stage !== "completed" && stage !== "rejected" && !r.assigned_technician_name;
-    }).length;
     return {
       submitted,
       approved,
+      payment,
       processing,
       completed,
       rejected,
-      assigned,
-      unassignedActive,
     };
   }, [rows]);
 
-  const runAssignment = async (
-    order: AdminOrderHistoryDto,
-    technician: Pick<AdminUserDto, "firebase_uid" | "full_name" | "email"> | null,
-  ) => {
-    if (normalizeStage(order.status) === "rejected") {
-      setAssignTarget(null);
-      return;
-    }
+  const actionGradient: [string, string] = ["#4F7CFF", "#8C5BEA"];
+  const mutedGradient: [string, string] = ["#64748B", "#94A3B8"];
+  const successGradient: [string, string] = ["#16A34A", "#22C55E"];
 
-    setAssignBusyId(order.id);
+  const runAssignTechnician = async (
+    row: AdminOrderHistoryDto,
+    technician: AdminUserDto,
+  ) => {
+    setBusyOrderId(row.id);
     try {
-      await assignOrderTechnician(
-        {
-          id: order.id,
-          firebase_key: order.firebase_key,
-          order_number: order.order_number,
-          status: rowStatusForAssignment(order.status),
-        },
-        technician,
-      );
+      await assignOrderTechnician(row, technician);
       await loadHistory();
-      setAssignTarget(null);
+      setTechnicianTarget(null);
       feedback.showSuccess(
-        technician ? "Technician Assigned" : "Assignment Cleared",
-        technician
-          ? `${order.order_number} is now assigned to ${technician.full_name}.`
-          : `${order.order_number} is no longer assigned to a technician.`,
+        "Technician Assigned",
+        `${row.order_number} is now assigned to ${technician.full_name}.`,
       );
     } catch (error) {
       feedback.showError(
         "Assignment Failed",
-        error instanceof Error
-          ? error.message
-          : "Unable to update technician assignment.",
+        error instanceof Error ? error.message : "Unable to assign technician.",
       );
     } finally {
-      setAssignBusyId(null);
+      setBusyOrderId(null);
     }
   };
 
-  const runEquipmentAssignment = async (
-    order: AdminOrderHistoryDto,
-    equipment: Pick<EquipmentPayload, "id" | "name"> | null,
+  const runAssignEquipment = async (
+    row: AdminOrderHistoryDto,
+    equipment: EquipmentPayload,
   ) => {
-    const stage = normalizeStage(order.status);
-    if (stage === "rejected" || stage === "completed") {
-      setEquipmentTarget(null);
-      return;
-    }
-
-    setAssignBusyId(order.id);
+    setBusyOrderId(row.id);
     try {
       await assignOrderEquipment(
         {
-          orderId: order.id,
-          orderNumber: order.order_number,
-          firebaseKey: order.firebase_key,
-          status: rowStatusForAssignment(order.status),
+          orderId: row.id,
+          orderNumber: row.order_number,
+          firebaseKey: row.firebase_key,
+          status: row.status,
+          scheduledStart: row.scheduled_start,
+          scheduledEnd: row.scheduled_end || row.estimated_completion,
         },
-        equipment,
+        { id: equipment.id, name: equipment.name },
       );
       await loadHistory();
       setEquipmentTarget(null);
       feedback.showSuccess(
-        equipment ? "Equipment Assigned" : "Equipment Cleared",
-        equipment
-          ? `${order.order_number} is now linked to ${equipment.name}.`
-          : `${order.order_number} no longer has assigned equipment.`,
+        "Equipment Assigned",
+        `${row.order_number} is now linked to ${equipment.name}.`,
       );
     } catch (error) {
       feedback.showError(
-        "Equipment Update Failed",
-        error instanceof Error
-          ? error.message
-          : "Unable to update equipment assignment.",
+        "Assignment Failed",
+        error instanceof Error ? error.message : "Unable to assign equipment.",
       );
     } finally {
-      setAssignBusyId(null);
+      setBusyOrderId(null);
     }
   };
 
-  const actionGradient: [string, string] = ["#4F7CFF", "#8C5BEA"];
-  const mutedGradient: [string, string] = ["#64748B", "#94A3B8"];
-
   return (
     <RoleContentPage
-      title="Orders & Assignments"
-      subtitle="Merged admin timeline, queue detail, and technician assignment management."
+      title="Order Timeline"
+      subtitle="Live order list and workflow details."
       role="Admin"
       activeKey="order-history"
       menuItems={adminMenu}
@@ -323,11 +383,10 @@ export default function AdminOrderHistoryPage() {
           {[
             ["Submitted", summary.submitted, theme.colors.primary],
             ["Approved", summary.approved, theme.colors.secondary],
+            ["Payment Due", summary.payment, theme.colors.info],
             ["Processing", summary.processing, theme.colors.warning],
             ["Completed", summary.completed, theme.colors.success],
             ["Rejected", summary.rejected, theme.colors.danger],
-            ["Assigned", summary.assigned, theme.colors.info],
-            ["Unassigned Active", summary.unassignedActive, theme.colors.warning],
           ].map(([label, value, color]) => (
             <View
               key={String(label)}
@@ -358,9 +417,24 @@ export default function AdminOrderHistoryPage() {
             },
           ]}
         >
-          <Text style={[styles.sectionSub, { color: theme.colors.textMuted }]}>
-            Updated {lastUpdated || "--"}
-          </Text>
+          <View style={styles.syncRow}>
+            <Text style={[styles.sectionSub, { color: theme.colors.textMuted, marginBottom: 0 }]}>
+              Updated {lastUpdated || "--"}
+            </Text>
+            <Pressable
+              onPress={() => void loadHistory()}
+              disabled={syncing}
+              style={[
+                styles.refreshBtn,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: syncing ? theme.colors.border : theme.colors.primary,
+                },
+              ]}
+            >
+              <Text style={styles.refreshBtnText}>{syncing ? "Syncing…" : "Refresh"}</Text>
+            </Pressable>
+          </View>
           <TextInput
             value={search}
             onChangeText={setSearch}
@@ -441,6 +515,7 @@ export default function AdminOrderHistoryPage() {
                       "all",
                       "completed",
                       "processing",
+                      "payment",
                       "pending",
                       "approved",
                       "rejected",
@@ -491,10 +566,10 @@ export default function AdminOrderHistoryPage() {
           </View>
 
           <Text style={[styles.sectionTitle, { color: theme.colors.text }]}> 
-            Orders, Timeline, and Technician Assignment
+            Orders and Timeline
           </Text>
           <Text style={[styles.sectionSub, { color: theme.colors.textMuted }]}> 
-            This page replaces the separate admin queue screen. Assign active orders here and the matched technician dashboard updates live.
+            This page shows the full order list and workflow progress.
           </Text>
           <View
             style={[
@@ -512,10 +587,10 @@ export default function AdminOrderHistoryPage() {
               Submitted: waiting for admin review
             </Text>
             <Text style={[styles.guideLine, { color: theme.colors.textMuted }]}> 
-              Approved: accepted and ready for technician assignment
+              Approved: accepted by admin
             </Text>
             <Text style={[styles.guideLine, { color: theme.colors.textMuted }]}> 
-              Assignment: choose the technician responsible before technician execution begins
+              Payment Pending: customer payment happens before technician work begins
             </Text>
             <Text style={[styles.guideLine, { color: theme.colors.textMuted }]}> 
               Processing: technician is working on it
@@ -528,11 +603,7 @@ export default function AdminOrderHistoryPage() {
           {filtered.slice(0, 20).map((row) => {
             const stage = normalizeStage(row.status);
             const step = stageStep(stage);
-            const canAssignTechnician =
-              stage !== "rejected" && stage !== "completed";
-            const canAssignEquipment =
-              stage !== "rejected" && stage !== "completed";
-            const labels = ["Submitted", "Approved", "Processing", "Completed"] as const;
+            const labels = ["Submitted", "Approved", "Payment", "Processing", "Completed"] as const;
             const pillColor =
               stage === "completed"
                 ? theme.colors.success
@@ -572,8 +643,7 @@ export default function AdminOrderHistoryPage() {
                   </Text>
                 </View>
                 <Text style={[styles.rowSub, { color: theme.colors.textMuted }]}>Customer: {row.customer_name} | Company: {row.company_name || "-"}</Text>
-                <Text style={[styles.rowSub, { color: theme.colors.textMuted }]}>Sample: {row.sample_type || "-"} | Compound: {row.compound_name || "-"}</Text>
-                <Text style={[styles.rowSub, { color: theme.colors.textMuted }]}>Quantity: {row.quantity ?? "-"} {row.unit || ""}</Text>
+                <Text style={[styles.rowSub, { color: theme.colors.textMuted }]}>Requested Details: {getRequestSummary(row)}</Text>
                 <Text style={[styles.rowSub, { color: theme.colors.textMuted }]}>Assigned Technician: {row.assigned_technician_name || "Not assigned"}</Text>
                 <Text style={[styles.stageMeaning, { color: pillColor }]}> 
                   {stageMeaning(stage)}
@@ -642,9 +712,21 @@ export default function AdminOrderHistoryPage() {
                     {(row.priority || "standard").toUpperCase()}
                   </Text>
                 </View>
+                {hasValue(row.sample_type) ? (
+                  <View style={styles.kvRow}>
+                    <Text style={[styles.kvKey, { color: theme.colors.textMuted }]}>Sample Type</Text>
+                    <Text style={[styles.kvValue, { color: theme.colors.text }]}>{formatDisplayCase(row.sample_type)}</Text>
+                  </View>
+                ) : null}
+                {hasValue(row.compound_name) ? (
+                  <View style={styles.kvRow}>
+                    <Text style={[styles.kvKey, { color: theme.colors.textMuted }]}>Compound</Text>
+                    <Text style={[styles.kvValue, { color: theme.colors.text }]}>{formatDisplayCase(row.compound_name)}</Text>
+                  </View>
+                ) : null}
                 <View style={styles.kvRow}>
-                  <Text style={[styles.kvKey, { color: theme.colors.textMuted }]}>Samples</Text>
-                  <Text style={[styles.kvValue, { color: theme.colors.text }]}>{row.sample_count}</Text>
+                  <Text style={[styles.kvKey, { color: theme.colors.textMuted }]}>Quantity</Text>
+                  <Text style={[styles.kvValue, { color: theme.colors.text }]}>{formatQuantityText(row.quantity, row.unit, displaySampleCount(row))}</Text>
                 </View>
                 <View style={styles.kvRow}>
                   <Text style={[styles.kvKey, { color: theme.colors.textMuted }]}>Equipment</Text>
@@ -653,18 +735,6 @@ export default function AdminOrderHistoryPage() {
                 <View style={styles.kvRow}>
                   <Text style={[styles.kvKey, { color: theme.colors.textMuted }]}>Submitted</Text>
                   <Text style={[styles.kvValue, { color: theme.colors.text }]}>{formatDate(row.created_at)}</Text>
-                </View>
-                <View style={styles.kvRow}>
-                  <Text style={[styles.kvKey, { color: theme.colors.textMuted }]}>Scheduled Start</Text>
-                  <Text style={[styles.kvValue, { color: theme.colors.text }]}>{formatDate(row.scheduled_start)}</Text>
-                </View>
-                <View style={styles.kvRow}>
-                  <Text style={[styles.kvKey, { color: theme.colors.textMuted }]}>Scheduled End</Text>
-                  <Text style={[styles.kvValue, { color: theme.colors.text }]}>{formatDate(row.scheduled_end)}</Text>
-                </View>
-                <View style={styles.kvRow}>
-                  <Text style={[styles.kvKey, { color: theme.colors.textMuted }]}>ETA</Text>
-                  <Text style={[styles.kvValue, { color: theme.colors.text }]}>{formatDate(row.estimated_completion)}</Text>
                 </View>
                 {row.notes ? (
                   <Text style={[styles.rowSub, { color: theme.colors.textMuted }]}>Notes: {row.notes}</Text>
@@ -675,46 +745,38 @@ export default function AdminOrderHistoryPage() {
                 {row.technician_status_updated_at ? (
                   <Text style={[styles.rowSub, { color: theme.colors.textMuted }]}>Updated {formatDate(row.technician_status_updated_at)}{row.technician_status_updated_by ? ` by ${row.technician_status_updated_by}` : ""}</Text>
                 ) : null}
-                {canAssignTechnician || canAssignEquipment ? (
-                  <View style={styles.orderActionRow}>
-                    {canAssignTechnician ? (
-                      <GradientButton
-                        onPress={() => setAssignTarget(row)}
-                        style={styles.assignBtn}
-                        colors={
-                          row.assigned_technician_name
-                            ? ["#0891B2", "#0EA5E9"]
-                            : actionGradient
-                        }
-                        compact
-                      >
-                        <Text style={styles.btnText}>
-                          {row.assigned_technician_name
-                            ? "Reassign Technician"
-                            : "Assign Technician"}
-                        </Text>
-                      </GradientButton>
-                    ) : null}
-                    {canAssignEquipment ? (
-                      <GradientButton
-                        onPress={() => setEquipmentTarget(row)}
-                        style={styles.assignBtn}
-                        colors={
-                          row.equipment_name
-                            ? ["#0F766E", "#14B8A6"]
-                            : ["#2563EB", "#38BDF8"]
-                        }
-                        compact
-                      >
-                        <Text style={styles.btnText}>
-                          {row.equipment_name
-                            ? "Reassign Equipment"
-                            : "Assign Equipment"}
-                        </Text>
-                      </GradientButton>
-                    ) : null}
-                  </View>
-                ) : null}
+
+                <View style={styles.orderActionRow}>
+                  {canAssignEquipment(row.status) ? (
+                    <GradientButton
+                      style={styles.assignBtn}
+                      onPress={() => setEquipmentTarget(row)}
+                      colors={actionGradient}
+                      compact
+                      disabled={busyOrderId === row.id}
+                    >
+                      <Text style={styles.btnText}>
+                        {row.equipment_name ? "Change Equipment" : "Assign Equipment"}
+                      </Text>
+                    </GradientButton>
+                  ) : null}
+
+                  {canAssignTechnician(row.status) ? (
+                    <GradientButton
+                      style={styles.assignBtn}
+                      onPress={() => setTechnicianTarget(row)}
+                      colors={successGradient}
+                      compact
+                      disabled={busyOrderId === row.id}
+                    >
+                      <Text style={styles.btnText}>
+                        {row.assigned_technician_name ? "Change Technician" : "Assign Technician"}
+                      </Text>
+                    </GradientButton>
+                  ) : stage !== "rejected" && stage !== "completed" ? (
+                    <Text style={[styles.rowSub, { color: theme.colors.textMuted }]}>Technician assignment becomes available after customer payment is completed.</Text>
+                  ) : null}
+                </View>
               </View>
             );
           })}
@@ -726,181 +788,76 @@ export default function AdminOrderHistoryPage() {
           ) : null}
         </View>
       </View>
+
       <Modal
-        visible={Boolean(
-          assignTarget &&
-            normalizeStage(assignTarget.status) !== "rejected" &&
-            normalizeStage(assignTarget.status) !== "completed",
-        )}
+        visible={Boolean(technicianTarget)}
         transparent
         animationType="fade"
-        onRequestClose={() => setAssignTarget(null)}
+        onRequestClose={() => setTechnicianTarget(null)}
       >
         <View style={styles.modalBackdrop}>
-          <View
-            style={[
-              styles.modalCard,
-              {
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.border,
-              },
-            ]}
-          >
+          <View style={[styles.modalCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
             <Text style={[styles.modalTitle, { color: theme.colors.text }]}>Assign Technician</Text>
-            <Text style={[styles.modalSub, { color: theme.colors.textMuted }]}> 
-              {assignTarget?.order_number} will appear on the selected technician dashboard and calendar.
-            </Text>
+            <Text style={[styles.modalSub, { color: theme.colors.textMuted }]}>Select a technician for {technicianTarget?.order_number}.</Text>
             <ScrollView style={styles.modalList} contentContainerStyle={styles.modalListContent}>
+              {technicians.map((tech) => (
+                <Pressable
+                  key={`${tech.id}-${tech.email}`}
+                  onPress={() => technicianTarget ? void runAssignTechnician(technicianTarget, tech) : undefined}
+                  style={[styles.techOption, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }]}
+                >
+                  <Text style={[styles.techName, { color: theme.colors.text }]}>{tech.full_name}</Text>
+                  <Text style={[styles.techMeta, { color: theme.colors.textMuted }]}>{tech.email}</Text>
+                </Pressable>
+              ))}
               {technicians.length === 0 ? (
-                <Text style={[styles.empty, { color: theme.colors.textMuted }]}>No active technician accounts were found.</Text>
-              ) : (
-                technicians.map((technician) => {
-                  const selected =
-                    assignTarget?.assigned_technician_uid === technician.firebase_uid;
-                  return (
-                    <Pressable
-                      key={technician.id}
-                      disabled={assignBusyId === assignTarget?.id}
-                      onPress={() => {
-                        if (!assignTarget) return;
-                        void runAssignment(assignTarget, technician);
-                      }}
-                      style={[
-                        styles.techOption,
-                        {
-                          borderColor: selected
-                            ? theme.colors.primary
-                            : theme.colors.border,
-                          backgroundColor: selected
-                            ? theme.colors.primarySoft
-                            : theme.colors.surfaceMuted,
-                          opacity: assignBusyId === assignTarget?.id ? 0.7 : 1,
-                        },
-                      ]}
-                    >
-                      <Text style={[styles.techName, { color: theme.colors.text }]}>{technician.full_name}</Text>
-                      <Text style={[styles.techMeta, { color: theme.colors.textMuted }]}>{technician.email}</Text>
-                    </Pressable>
-                  );
-                })
-              )}
+                <Text style={[styles.rowSub, { color: theme.colors.textMuted }]}>No active technicians are available right now.</Text>
+              ) : null}
             </ScrollView>
             <View style={styles.modalActions}>
               <Pressable
-                onPress={() => setAssignTarget(null)}
-                style={[
-                  styles.modalSecondaryBtn,
-                  {
-                    borderColor: theme.colors.border,
-                    backgroundColor: theme.colors.surfaceMuted,
-                  },
-                ]}
+                onPress={() => setTechnicianTarget(null)}
+                style={[styles.modalSecondaryBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }]}
               >
                 <Text style={[styles.modalSecondaryText, { color: theme.colors.text }]}>Close</Text>
               </Pressable>
-              <GradientButton
-                onPress={() => {
-                  if (!assignTarget) return;
-                  void runAssignment(assignTarget, null);
-                }}
-                disabled={!assignTarget || assignBusyId === assignTarget.id}
-                style={styles.modalPrimaryBtn}
-                colors={["#DC2626", "#F97316"]}
-                compact
-              >
-                <Text style={styles.btnText}>Clear Assignment</Text>
-              </GradientButton>
             </View>
           </View>
         </View>
       </Modal>
+
       <Modal
-        visible={Boolean(
-          equipmentTarget &&
-            normalizeStage(equipmentTarget.status) !== "rejected" &&
-            normalizeStage(equipmentTarget.status) !== "completed",
-        )}
+        visible={Boolean(equipmentTarget)}
         transparent
         animationType="fade"
         onRequestClose={() => setEquipmentTarget(null)}
       >
         <View style={styles.modalBackdrop}>
-          <View
-            style={[
-              styles.modalCard,
-              {
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.border,
-              },
-            ]}
-          >
+          <View style={[styles.modalCard, { backgroundColor: theme.colors.surface, borderColor: theme.colors.border }]}>
             <Text style={[styles.modalTitle, { color: theme.colors.text }]}>Assign Equipment</Text>
-            <Text style={[styles.modalSub, { color: theme.colors.textMuted }]}> 
-              {equipmentTarget?.order_number} will use the selected equipment across admin, technician, and customer views.
-            </Text>
+            <Text style={[styles.modalSub, { color: theme.colors.textMuted }]}>Select equipment for {equipmentTarget?.order_number}.</Text>
             <ScrollView style={styles.modalList} contentContainerStyle={styles.modalListContent}>
-              {equipmentOptions.length === 0 ? (
-                <Text style={[styles.empty, { color: theme.colors.textMuted }]}>No equipment entries were found.</Text>
-              ) : (
-                equipmentOptions.map((equipment) => {
-                  const selected =
-                    equipmentTarget?.equipment_id === equipment.id ||
-                    equipmentTarget?.equipment_name === equipment.name;
-                  return (
-                    <Pressable
-                      key={equipment.id ?? equipment.name}
-                      disabled={assignBusyId === equipmentTarget?.id}
-                      onPress={() => {
-                        if (!equipmentTarget) return;
-                        void runEquipmentAssignment(equipmentTarget, equipment);
-                      }}
-                      style={[
-                        styles.techOption,
-                        {
-                          borderColor: selected
-                            ? theme.colors.primary
-                            : theme.colors.border,
-                          backgroundColor: selected
-                            ? theme.colors.primarySoft
-                            : theme.colors.surfaceMuted,
-                          opacity: assignBusyId === equipmentTarget?.id ? 0.7 : 1,
-                        },
-                      ]}
-                    >
-                      <Text style={[styles.techName, { color: theme.colors.text }]}>{equipment.name}</Text>
-                      <Text style={[styles.techMeta, { color: theme.colors.textMuted }]}>
-                        {equipment.equipment_type || "Equipment"} | {equipment.is_available ? "Available" : "Busy"}
-                      </Text>
-                    </Pressable>
-                  );
-                })
-              )}
+              {equipmentRows.map((item) => (
+                <Pressable
+                  key={`${item.id || item.name}-${item.name}`}
+                  onPress={() => equipmentTarget ? void runAssignEquipment(equipmentTarget, item) : undefined}
+                  style={[styles.techOption, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }]}
+                >
+                  <Text style={[styles.techName, { color: theme.colors.text }]}>{item.name}</Text>
+                  <Text style={[styles.techMeta, { color: theme.colors.textMuted }]}>{item.equipment_type || "General"}</Text>
+                </Pressable>
+              ))}
+              {equipmentRows.length === 0 ? (
+                <Text style={[styles.rowSub, { color: theme.colors.textMuted }]}>No equipment is available right now.</Text>
+              ) : null}
             </ScrollView>
             <View style={styles.modalActions}>
               <Pressable
                 onPress={() => setEquipmentTarget(null)}
-                style={[
-                  styles.modalSecondaryBtn,
-                  {
-                    borderColor: theme.colors.border,
-                    backgroundColor: theme.colors.surfaceMuted,
-                  },
-                ]}
+                style={[styles.modalSecondaryBtn, { borderColor: theme.colors.border, backgroundColor: theme.colors.surfaceMuted }]}
               >
                 <Text style={[styles.modalSecondaryText, { color: theme.colors.text }]}>Close</Text>
               </Pressable>
-              <GradientButton
-                onPress={() => {
-                  if (!equipmentTarget) return;
-                  void runEquipmentAssignment(equipmentTarget, null);
-                }}
-                disabled={!equipmentTarget || assignBusyId === equipmentTarget.id}
-                style={styles.modalPrimaryBtn}
-                colors={["#DC2626", "#F97316"]}
-                compact
-              >
-                <Text style={styles.btnText}>Clear Equipment</Text>
-              </GradientButton>
             </View>
           </View>
         </View>
@@ -973,6 +930,20 @@ const styles = StyleSheet.create({
   btnText: { color: "#fff", fontWeight: "800", fontSize: 12 },
   sectionTitle: { fontSize: 16, fontWeight: "800", marginTop: 4 },
   sectionSub: { fontSize: 12, fontWeight: "700", marginBottom: 2 },
+  syncRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 8,
+  },
+  refreshBtn: {
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+  },
+  refreshBtnText: { color: "#fff", fontSize: 12, fontWeight: "800" },
   guideWrap: { borderWidth: 1, borderRadius: 10, padding: 10, gap: 2 },
   guideTitle: { fontSize: 12, fontWeight: "800", marginBottom: 2 },
   guideLine: { fontSize: 11, fontWeight: "700" },

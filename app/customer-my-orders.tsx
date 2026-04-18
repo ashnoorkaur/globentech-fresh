@@ -1,13 +1,17 @@
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { RoleContentPage } from "../components/role-content-page";
 import { customerMenu } from "../constants/role-menus";
 import { useFeedbackModal } from "../hooks/use-feedback-modal";
 import { useFocusedPolling } from "../hooks/use-focused-polling";
-import { useCachedScreenState } from "../hooks/use-screen-cache";
-import { statusLabel, toLifecycleStatus } from "../lib/order-workflow";
+import { clearScreenCache, useCachedScreenState } from "../hooks/use-screen-cache";
+import { backendDateTimeValue, formatBackendDateTime } from "../lib/date-time";
+import { normalizeOrderStatusForCompare } from "../lib/order-status-normalize";
+import { normalizeOrderPriorityValue } from "../lib/order-workflow";
 import {
+    clearCustomerOrderDetailsCache,
     fetchCustomerMyOrders,
     type CustomerOrderRow,
 } from "../lib/orders-api";
@@ -17,67 +21,74 @@ type StatusFilter =
   | "all"
   | "pending"
   | "approved"
+  | "payment"
   | "processing"
   | "completed"
   | "rejected";
-type SortMode = "newest" | "oldest" | "priority";
+type SortMode = "newest" | "oldest" | "priority" | "priority_standard";
 
 const statusOptions: StatusFilter[] = [
   "all",
   "pending",
   "approved",
+  "payment",
   "processing",
   "completed",
   "rejected",
 ];
-const sortOptions: SortMode[] = ["newest", "oldest", "priority"];
+const sortOptions: SortMode[] = ["newest", "oldest", "priority", "priority_standard"];
 
+const sortModeLabel = (mode: SortMode) => {
+  if (mode === "newest") return "Newest";
+  if (mode === "oldest") return "Oldest";
+  if (mode === "priority") return "High first";
+  return "Standard first";
+};
+
+/** Buckets customer stats/filters the same way we compare orders to the PHP site (substring + aliases). */
 const normalizeOrderStatus = (value?: string): StatusFilter => {
-  const lifecycle = toLifecycleStatus(value);
-  if (lifecycle === "completed" || lifecycle === "results_available") {
-    return "completed";
-  }
-  if (lifecycle === "testing" || lifecycle === "preparation") {
-    return "processing";
-  }
-  if (lifecycle === "approved" || lifecycle === "in_queue") {
-    return "approved";
-  }
-  if (lifecycle === "rejected") {
-    return "rejected";
-  }
+  const bucket = normalizeOrderStatusForCompare(value);
+  if (bucket === "rejected") return "rejected";
+  if (bucket === "completed") return "completed";
+  if (bucket === "payment_pending") return "payment";
+  if (bucket === "processing") return "processing";
+  if (bucket === "approved") return "approved";
   return "pending";
 };
 
 const getTimelineStep = (status: StatusFilter) => {
   if (status === "pending") return 1;
   if (status === "approved") return 2;
-  if (status === "processing") return 3;
-  if (status === "completed") return 4;
+  if (status === "payment") return 3;
+  if (status === "processing") return 4;
+  if (status === "completed") return 5;
   return 0;
 };
 
 const getProgressPercent = (status: StatusFilter) => {
-  if (status === "pending") return 25;
-  if (status === "approved") return 50;
-  if (status === "processing") return 75;
+  if (status === "pending") return 20;
+  if (status === "approved") return 40;
+  if (status === "payment") return 60;
+  if (status === "processing") return 80;
   if (status === "completed") return 100;
   return 0;
 };
 
 const getStageMeaning = (status: StatusFilter) => {
-  if (status === "pending") return "Submitted: waiting for admin review.";
-  if (status === "approved") return "Approved: accepted and added to queue.";
-  if (status === "processing") {
-    return "Processing: technician is currently handling this order.";
-  }
-  if (status === "completed") return "Completed: results are ready.";
-  return "Rejected: request was declined by admin.";
+  if (status === "pending") return "Waiting for admin review.";
+  if (status === "approved") return "Approved by admin.";
+  if (status === "payment") return "Payment required to continue.";
+  if (status === "processing") return "Technician is working on this order.";
+  if (status === "completed") return "Testing is complete and results are ready.";
+  return "This order was rejected by admin.";
 };
 
 const getDecisionSummary = (status: StatusFilter, orderNumber: string) => {
   if (status === "rejected") {
     return `Admin Decision: Rejected - ${orderNumber} was not approved.`;
+  }
+  if (status === "payment") {
+    return `Admin Decision: Accepted - ${orderNumber} is now waiting for customer payment.`;
   }
   if (
     status === "approved" ||
@@ -89,9 +100,67 @@ const getDecisionSummary = (status: StatusFilter, orderNumber: string) => {
   return `Admin Decision: Pending - ${orderNumber} is waiting for admin review.`;
 };
 
-const formatSampleType = (value?: string) => {
-  if (!value) return "N/A";
-  return value.charAt(0).toUpperCase() + value.slice(1).toLowerCase();
+const formatDisplayCase = (value?: string | null) => {
+  if (!value) return "";
+  return value.trim().replace(/\b[a-z]/g, (char) => char.toUpperCase());
+};
+
+const statusDisplayLabel = (status: StatusFilter) => {
+  if (status === "rejected") return "DISAPPROVED";
+  if (status === "pending") return "SUBMITTED";
+  if (status === "payment") return "PAYMENT";
+  return status.toUpperCase();
+};
+
+const hasValue = (value?: string | number | null) => {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "number") return Number.isFinite(value);
+  return value.trim().length > 0;
+};
+
+const formatDateTime = (value?: string | null, fallback = "N/A") => {
+  return formatBackendDateTime(value, fallback);
+};
+
+const displayText = (value?: string | number | null, fallback = "Not provided") => {
+  if (value === null || value === undefined) return fallback;
+  const text = String(value).trim();
+  return text ? text : fallback;
+};
+
+const formatQuantityText = (
+  quantity?: number | null,
+  unit?: string | null,
+  fallback = "Not provided",
+) => {
+  if (typeof quantity === "number" && Number.isFinite(quantity) && quantity > 0) {
+    return `${quantity} ${unit || ""}`.trim();
+  }
+  return fallback;
+};
+
+const getRequestSummary = (order: CustomerOrderRow) => {
+  return [
+    `Type: ${displayText(formatDisplayCase(order.sample_type), "Not provided")}`,
+    `Compound: ${displayText(formatDisplayCase(order.compound_name), order.notes ? "See notes" : "Not provided")}`,
+    `Quantity: ${formatQuantityText(order.quantity, order.unit, "Not provided")}`,
+  ].join(" • ");
+};
+
+const getOrderAmount = (order: CustomerOrderRow) => {
+  const sampleCount = Math.max(
+    1,
+    Number(order.sample_count ?? order.quantity ?? 1) || 1,
+  );
+  const priorityFee = normalizeOrderPriorityValue(order.priority) === "high" ? 50 : 0;
+  const extraSamples = Math.max(0, sampleCount - 1) * 25;
+  return 150 + priorityFee + extraSamples;
+};
+
+const isTemporaryDemoOrder = (order: CustomerOrderRow) => {
+  const orderRef = `${order.order_number || ""}`.toLowerCase();
+  const notes = `${order.notes || ""}`.toLowerCase();
+  return /teacher-demo|final-demo/.test(`${orderRef} ${notes}`);
 };
 
 export default function CustomerMyOrdersPage() {
@@ -99,7 +168,7 @@ export default function CustomerMyOrdersPage() {
   const feedback = useFeedbackModal();
   const previousStatusByIdRef = useRef<Record<string, StatusFilter>>({});
   const [orders, setOrders] = useCachedScreenState<CustomerOrderRow[]>(
-    "customer-my-orders:orders",
+    "customer-my-orders:orders:v11",
     [],
   );
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -110,16 +179,23 @@ export default function CustomerMyOrdersPage() {
   const [sortOpen, setSortOpen] = useState(false);
   const [expandedOrderId, setExpandedOrderId] = useState<number | null>(null);
   const [lastUpdated, setLastUpdated] = useCachedScreenState(
-    "customer-my-orders:lastUpdated",
+    "customer-my-orders:lastUpdated:v11",
     "",
   );
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (opts?: { bustCaches?: boolean }) => {
+    if (opts?.bustCaches) {
+      clearScreenCache("customer-my-orders");
+      clearCustomerOrderDetailsCache();
+    }
     try {
-      const rows = await fetchCustomerMyOrders();
+      const rows = (await fetchCustomerMyOrders()).filter(
+        (row) => !isTemporaryDemoOrder(row),
+      );
       const previous = previousStatusByIdRef.current;
       const hasPreviousSnapshot = Object.keys(previous).length > 0;
       const nextSnapshot: Record<string, StatusFilter> = {};
+      const movedToPayment: string[] = [];
       const movedToProcessing: string[] = [];
       const movedToCompleted: string[] = [];
       const movedToRejected: string[] = [];
@@ -135,6 +211,7 @@ export default function CustomerMyOrdersPage() {
         if (!previousStatus || previousStatus === nextStatus) return;
 
         const label = row.order_number || `Order #${row.id}`;
+        if (nextStatus === "payment") movedToPayment.push(label);
         if (nextStatus === "processing") movedToProcessing.push(label);
         if (nextStatus === "completed") movedToCompleted.push(label);
         if (nextStatus === "rejected") movedToRejected.push(label);
@@ -152,6 +229,15 @@ export default function CustomerMyOrdersPage() {
           remaining > 0
             ? `${first} and ${remaining} more order(s) are now completed.`
             : `${first} is now completed and results are ready.`,
+        );
+      } else if (movedToPayment.length > 0) {
+        const first = movedToPayment[0];
+        const remaining = movedToPayment.length - 1;
+        feedback.showInfo(
+          "Payment Required",
+          remaining > 0
+            ? `${first} and ${remaining} more order(s) are awaiting customer payment.`
+            : `${first} was approved and is now awaiting payment.`,
         );
       } else if (movedToProcessing.length > 0) {
         const first = movedToProcessing[0];
@@ -186,6 +272,9 @@ export default function CustomerMyOrdersPage() {
     const approved = orders.filter(
       (o) => normalizeOrderStatus(o.status) === "approved",
     ).length;
+    const payment = orders.filter(
+      (o) => normalizeOrderStatus(o.status) === "payment",
+    ).length;
     const completed = orders.filter(
       (o) => normalizeOrderStatus(o.status) === "completed",
     ).length;
@@ -195,7 +284,7 @@ export default function CustomerMyOrdersPage() {
     const rejected = orders.filter(
       (o) => normalizeOrderStatus(o.status) === "rejected",
     ).length;
-    return { submitted, approved, processing, completed, rejected };
+    return { submitted, approved, payment, processing, completed, rejected };
   }, [orders]);
 
   const filteredOrders = useMemo(() => {
@@ -205,22 +294,44 @@ export default function CustomerMyOrdersPage() {
     });
 
     normalized.sort((a, b) => {
-      const aTime = a.created_at ? new Date(a.created_at).getTime() : 0;
-      const bTime = b.created_at ? new Date(b.created_at).getTime() : 0;
+      const aTime = backendDateTimeValue(a.created_at);
+      const bTime = backendDateTimeValue(b.created_at);
 
+      if (sortMode === "priority") {
+        const ap = normalizeOrderPriorityValue(a.priority) === "high" ? 1 : 0;
+        const bp = normalizeOrderPriorityValue(b.priority) === "high" ? 1 : 0;
+        if (ap !== bp) return bp - ap;
+        return bTime - aTime;
+      }
+      if (sortMode === "priority_standard") {
+        const ap = normalizeOrderPriorityValue(a.priority) === "high" ? 1 : 0;
+        const bp = normalizeOrderPriorityValue(b.priority) === "high" ? 1 : 0;
+        if (ap !== bp) return ap - bp;
+        return bTime - aTime;
+      }
       if (sortMode === "newest") return bTime - aTime;
-      if (sortMode === "oldest") return aTime - bTime;
-
-      const aPriority =
-        (a.priority || "standard").toLowerCase() === "priority" ? 1 : 0;
-      const bPriority =
-        (b.priority || "standard").toLowerCase() === "priority" ? 1 : 0;
-      if (bPriority !== aPriority) return bPriority - aPriority;
-      return bTime - aTime;
+      return aTime - bTime;
     });
 
     return normalized;
   }, [orders, sortMode, statusFilter]);
+
+  const openPaymentPage = useCallback((order: CustomerOrderRow) => {
+    router.push({
+      pathname: "/customer-checkout",
+      params: {
+        orderId: String(order.id),
+        orderNumber: order.order_number || `ORD-${order.id}`,
+        priority: order.priority || "standard",
+        sampleCount: String(order.sample_count ?? 1),
+        sampleType: order.sample_type || "",
+        compoundName: order.compound_name || "",
+        quantity: String(order.quantity ?? ""),
+        unit: order.unit || "",
+        amount: String(getOrderAmount(order)),
+      },
+    });
+  }, []);
 
   return (
     <RoleContentPage
@@ -251,25 +362,30 @@ export default function CustomerMyOrdersPage() {
             ]}
           >
             <Text style={[styles.bannerTitle, { color: theme.colors.text }]}>
-              Order Stage Guide
+              Your Orders
             </Text>
             <Text style={[styles.bannerSub, { color: theme.colors.textMuted }]}>
-              Submitted: waiting for admin review
+              Exact submitted date and time are shown below for each order.
             </Text>
             <Text style={[styles.bannerSub, { color: theme.colors.textMuted }]}>
-              Approved: accepted and queued
-            </Text>
-            <Text style={[styles.bannerSub, { color: theme.colors.textMuted }]}>
-              Processing: technician is working on it
-            </Text>
-            <Text style={[styles.bannerSub, { color: theme.colors.textMuted }]}>
-              Completed: results are ready
+              Use Pay Now on any non-rejected order to continue.
             </Text>
           </View>
 
-          <Text style={[styles.syncText, { color: theme.colors.textMuted }]}>
-            Live Updated: {lastUpdated || "--"}
-          </Text>
+          <View style={styles.syncRow}>
+            <Text style={[styles.syncText, { color: theme.colors.textMuted }]}>
+              Live Updated: {lastUpdated || "--"}
+            </Text>
+            <Pressable
+              onPress={() => void loadData({ bustCaches: true })}
+              hitSlop={10}
+              style={styles.refreshPressable}
+            >
+              <Text style={[styles.refreshText, { color: theme.colors.primary }]}>
+                Refresh
+              </Text>
+            </Pressable>
+          </View>
 
           <View style={styles.statsRow}>
             <View
@@ -308,6 +424,24 @@ export default function CustomerMyOrdersPage() {
                 style={[styles.statValue, { color: theme.colors.secondary }]}
               >
                 {stats.approved}
+              </Text>
+            </View>
+            <View
+              style={[
+                styles.stat,
+                {
+                  borderColor: theme.colors.border,
+                  backgroundColor: theme.colors.surfaceMuted,
+                },
+              ]}
+            >
+              <Text
+                style={[styles.statLabel, { color: theme.colors.textMuted }]}
+              >
+                Payment Due
+              </Text>
+              <Text style={[styles.statValue, { color: theme.colors.info }]}>
+                {stats.payment}
               </Text>
             </View>
             <View
@@ -453,7 +587,7 @@ export default function CustomerMyOrdersPage() {
                   <Text
                     style={[styles.selectorText, { color: theme.colors.text }]}
                   >
-                    Sort: {draftSort}
+                    Sort: {sortModeLabel(draftSort)}
                   </Text>
                   <Ionicons
                     name={sortOpen ? "chevron-up" : "chevron-down"}
@@ -495,7 +629,7 @@ export default function CustomerMyOrdersPage() {
                           { color: theme.colors.text },
                         ]}
                       >
-                        {value}
+                        {sortModeLabel(value)}
                       </Text>
                     </Pressable>
                   ))}
@@ -528,21 +662,23 @@ export default function CustomerMyOrdersPage() {
             ) : (
               filteredOrders.map((order) => {
               const normalizedStatus = normalizeOrderStatus(order.status);
-              const lifecycle = toLifecycleStatus(order.status);
               const activeStep = getTimelineStep(normalizedStatus);
               const expanded = expandedOrderId === order.id;
               const orderNumber = order.order_number || `Order #${order.id}`;
               const rejectionReason = order.rejection_reason?.trim();
+              const priorityNorm = normalizeOrderPriorityValue(order.priority);
               const stageColor =
                 normalizedStatus === "completed"
                   ? theme.colors.success
                   : normalizedStatus === "processing"
                     ? theme.colors.warning
-                    : normalizedStatus === "approved"
-                      ? theme.colors.secondary
-                      : normalizedStatus === "rejected"
-                        ? theme.colors.danger
-                        : theme.colors.primary;
+                    : normalizedStatus === "payment"
+                      ? theme.colors.info
+                      : normalizedStatus === "approved"
+                        ? theme.colors.secondary
+                        : normalizedStatus === "rejected"
+                          ? theme.colors.danger
+                          : theme.colors.primary;
 
               return (
                 <View
@@ -568,34 +704,62 @@ export default function CustomerMyOrdersPage() {
                           { color: theme.colors.textMuted },
                         ]}
                       >
-                        {order.created_at
-                          ? new Date(order.created_at).toLocaleString()
-                          : "No date"}
+                        Submitted: {formatDateTime(order.created_at, "No date")}
                       </Text>
                     </View>
 
-                    <View
-                      style={[
-                        styles.statusPill,
-                        { backgroundColor: stageColor + "22" },
-                      ]}
-                    >
-                      <Text
-                        style={[styles.statusPillText, { color: stageColor }]}
+                    <View style={styles.pillRow}>
+                      <View
+                        style={[
+                          styles.priorityPill,
+                          {
+                            backgroundColor:
+                              (priorityNorm === "high"
+                                ? theme.colors.danger
+                                : theme.colors.warning) + "22",
+                          },
+                        ]}
                       >
-                        {normalizedStatus === "rejected"
-                          ? "DISAPPROVED"
-                          : statusLabel(lifecycle).toUpperCase()}
-                      </Text>
+                        <Text
+                          style={[
+                            styles.priorityPillText,
+                            {
+                              color:
+                                priorityNorm === "high"
+                                  ? theme.colors.danger
+                                  : theme.colors.warning,
+                            },
+                          ]}
+                        >
+                          {priorityNorm === "high" ? "HIGH" : "STANDARD"}
+                        </Text>
+                      </View>
+                      <View
+                        style={[
+                          styles.statusPill,
+                          { backgroundColor: stageColor + "22" },
+                        ]}
+                      >
+                        <Text
+                          style={[styles.statusPillText, { color: stageColor }]}
+                        >
+                          {statusDisplayLabel(normalizedStatus)}
+                        </Text>
+                      </View>
                     </View>
                   </View>
 
                   <Text style={[styles.stageMeaning, { color: stageColor }]}>
                     {getStageMeaning(normalizedStatus)}
                   </Text>
-                  <Text style={[styles.decisionText, { color: stageColor }]}>
-                    {getDecisionSummary(normalizedStatus, orderNumber)}
+                  <Text style={[styles.requestText, { color: theme.colors.textMuted }]}> 
+                    Requested: {getRequestSummary(order)}
                   </Text>
+                  {normalizedStatus === "payment" ? (
+                    <Text style={[styles.rejectionText, { color: theme.colors.info }]}>
+                      Customer payment is still needed before processing starts.
+                    </Text>
+                  ) : null}
                   {normalizedStatus === "rejected" && rejectionReason ? (
                     <Text style={[styles.rejectionText, { color: theme.colors.danger }]}>
                       Rejection Reason: {rejectionReason}
@@ -615,6 +779,7 @@ export default function CustomerMyOrdersPage() {
                       [
                         "Submitted",
                         "Approved",
+                        "Payment",
                         "Processing",
                         "Completed",
                       ] as const
@@ -643,7 +808,7 @@ export default function CustomerMyOrdersPage() {
                               },
                             ]}
                           />
-                          {index < 3 ? (
+                          {index < 4 ? (
                             <View
                               style={[
                                 styles.timelineLine,
@@ -705,7 +870,7 @@ export default function CustomerMyOrdersPage() {
                         { color: theme.colors.textMuted },
                       ]}
                     >
-                      Priority: {(order.priority || "standard").toUpperCase()}
+                      Priority: {priorityNorm === "high" ? "HIGH" : "STANDARD"}
                     </Text>
                     <Text
                       style={[
@@ -713,28 +878,44 @@ export default function CustomerMyOrdersPage() {
                         { color: theme.colors.textMuted },
                       ]}
                     >
-                      Samples: {order.sample_count ?? 0}
+                      Total: ${getOrderAmount(order).toFixed(2)} CAD
                     </Text>
                   </View>
 
-                  <Pressable
-                    onPress={() =>
-                      setExpandedOrderId(expanded ? null : order.id)
-                    }
-                    style={[
-                      styles.detailsBtn,
-                      { backgroundColor: theme.colors.surface },
-                    ]}
-                  >
-                    <Text
+                  <View style={styles.actionRow}>
+                    {normalizedStatus !== "rejected" ? (
+                      <Pressable
+                        onPress={() => void openPaymentPage(order)}
+                        style={[
+                          styles.payBtn,
+                          { backgroundColor: theme.colors.primary },
+                        ]}
+                      >
+                        <Text style={styles.payBtnText}>Pay Now</Text>
+                      </Pressable>
+                    ) : null}
+                    <Pressable
+                      onPress={() =>
+                        setExpandedOrderId(expanded ? null : order.id)
+                      }
                       style={[
-                        styles.detailsBtnText,
-                        { color: theme.colors.primary },
+                        styles.detailsBtn,
+                        {
+                          backgroundColor: theme.colors.surface,
+                          flex: normalizedStatus !== "rejected" ? 1 : undefined,
+                        },
                       ]}
                     >
-                      {expanded ? "Hide Details" : "View Details"}
-                    </Text>
-                  </Pressable>
+                      <Text
+                        style={[
+                          styles.detailsBtnText,
+                          { color: theme.colors.primary },
+                        ]}
+                      >
+                        {expanded ? "Hide Details" : "View Details"}
+                      </Text>
+                    </Pressable>
+                  </View>
 
                   {expanded ? (
                     <View
@@ -768,7 +949,7 @@ export default function CustomerMyOrdersPage() {
                           { color: theme.colors.text },
                         ]}
                       >
-                        Status: {statusLabel(lifecycle)}
+                        Status: {statusDisplayLabel(normalizedStatus)}
                       </Text>
                       <Text
                         style={[
@@ -787,13 +968,33 @@ export default function CustomerMyOrdersPage() {
                       >
                         Meaning: {getStageMeaning(normalizedStatus)}
                       </Text>
+                      {hasValue(order.customer_name) ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          Customer: {order.customer_name}
+                        </Text>
+                      ) : null}
+                      {hasValue(order.company_name) ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          Company: {order.company_name}
+                        </Text>
+                      ) : null}
                       <Text
                         style={[
                           styles.detailLine,
                           { color: theme.colors.text },
                         ]}
                       >
-                        Customer: {order.customer_name || "N/A"}
+                        Priority: {priorityNorm === "high" ? "HIGH" : "STANDARD"}
                       </Text>
                       <Text
                         style={[
@@ -801,7 +1002,7 @@ export default function CustomerMyOrdersPage() {
                           { color: theme.colors.text },
                         ]}
                       >
-                        Company: {order.company_name || "N/A"}
+                        Sample Type: {displayText(formatDisplayCase(order.sample_type), "Not provided")}
                       </Text>
                       <Text
                         style={[
@@ -809,7 +1010,7 @@ export default function CustomerMyOrdersPage() {
                           { color: theme.colors.text },
                         ]}
                       >
-                        Priority: {(order.priority || "standard").toUpperCase()}
+                        Compound Name: {displayText(formatDisplayCase(order.compound_name), order.notes ? "See notes" : "Not provided")}
                       </Text>
                       <Text
                         style={[
@@ -817,64 +1018,48 @@ export default function CustomerMyOrdersPage() {
                           { color: theme.colors.text },
                         ]}
                       >
-                        Sample Count: {order.sample_count ?? 0}
+                        Quantity: {formatQuantityText(order.quantity, order.unit, "Check order details")}
                       </Text>
-                      <Text
-                        style={[
-                          styles.detailLine,
-                          { color: theme.colors.text },
-                        ]}
-                      >
-                        Sample Type: {formatSampleType(order.sample_type)}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.detailLine,
-                          { color: theme.colors.text },
-                        ]}
-                      >
-                        Compound Name: {order.compound_name || "N/A"}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.detailLine,
-                          { color: theme.colors.text },
-                        ]}
-                      >
-                        Quantity: {order.quantity ?? "N/A"} {order.unit || ""}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.detailLine,
-                          { color: theme.colors.text },
-                        ]}
-                      >
-                        Assigned Technician: {order.assigned_technician_name || "Awaiting assignment"}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.detailLine,
-                          { color: theme.colors.text },
-                        ]}
-                      >
-                        Equipment: {order.equipment_name || "Pending"}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.detailLine,
-                          { color: theme.colors.text },
-                        ]}
-                      >
-                        Scheduled Start: {order.scheduled_start ? new Date(order.scheduled_start).toLocaleString() : "N/A"}
-                      </Text>
-                      <Text
-                        style={[
-                          styles.detailLine,
-                          { color: theme.colors.text },
-                        ]}
-                      >
-                        Scheduled End: {order.scheduled_end ? new Date(order.scheduled_end).toLocaleString() : "N/A"}
-                      </Text>
+                      {hasValue(order.assigned_technician_name) ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          Assigned Technician: {order.assigned_technician_name}
+                        </Text>
+                      ) : null}
+                      {hasValue(order.equipment_name) ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          Equipment: {order.equipment_name}
+                        </Text>
+                      ) : null}
+                      {hasValue(order.scheduled_start) ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          Scheduled Start: {formatDateTime(order.scheduled_start)}
+                        </Text>
+                      ) : null}
+                      {hasValue(order.scheduled_end) ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          Scheduled End: {formatDateTime(order.scheduled_end)}
+                        </Text>
+                      ) : null}
                       {order.notes ? (
                         <Text
                           style={[
@@ -902,7 +1087,7 @@ export default function CustomerMyOrdersPage() {
                             { color: theme.colors.text },
                           ]}
                         >
-                          Update Time: {new Date(order.technician_status_updated_at).toLocaleString()}
+                          Update Time: {formatDateTime(order.technician_status_updated_at)}
                           {order.technician_status_updated_by
                             ? ` by ${order.technician_status_updated_by}`
                             : ""}
@@ -915,23 +1100,19 @@ export default function CustomerMyOrdersPage() {
                         ]}
                       >
                         Created:{" "}
-                        {order.created_at
-                          ? new Date(order.created_at).toLocaleString()
-                          : "N/A"}
+                        {formatDateTime(order.created_at)}
                       </Text>
-                      <Text
-                        style={[
-                          styles.detailLine,
-                          { color: theme.colors.text },
-                        ]}
-                      >
-                        Estimated Completion:{" "}
-                        {order.estimated_completion
-                          ? new Date(
-                              order.estimated_completion,
-                            ).toLocaleString()
-                          : "N/A"}
-                      </Text>
+                      {order.estimated_completion ? (
+                        <Text
+                          style={[
+                            styles.detailLine,
+                            { color: theme.colors.text },
+                          ]}
+                        >
+                          Estimated Completion:{" "}
+                          {formatDateTime(order.estimated_completion)}
+                        </Text>
+                      ) : null}
                       {rejectionReason ? (
                         <Text
                           style={[
@@ -973,8 +1154,17 @@ const styles = StyleSheet.create({
     letterSpacing: 0.7,
     marginBottom: 2,
   },
-  bannerSub: { fontSize: 11, fontWeight: "700" },
-  syncText: { fontSize: 11, fontWeight: "700" },
+  bannerSub: { fontSize: 11, fontWeight: "700", lineHeight: 16 },
+  syncRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 12,
+    marginBottom: 4,
+  },
+  syncText: { fontSize: 11, fontWeight: "700", flex: 1 },
+  refreshPressable: { paddingVertical: 4, paddingHorizontal: 6 },
+  refreshText: { fontSize: 12, fontWeight: "800" },
   statsRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
   stat: {
     width: "31%",
@@ -1012,12 +1202,16 @@ const styles = StyleSheet.create({
   ordersList: { gap: 10, paddingBottom: 12 },
   row: { borderWidth: 1, borderRadius: 12, padding: 10, gap: 6 },
   orderTopRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+  pillRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+  priorityPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
+  priorityPillText: { fontSize: 10, fontWeight: "800" },
   title: { fontSize: 14, fontWeight: "800" },
   subtitle: { fontSize: 12, fontWeight: "600" },
   statusPill: { borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 },
   statusPillText: { fontSize: 10, fontWeight: "800" },
   stageMeaning: { fontSize: 12, fontWeight: "700" },
   decisionText: { fontSize: 11, fontWeight: "700" },
+  requestText: { fontSize: 11, fontWeight: "600", lineHeight: 16 },
   rejectionText: { fontSize: 11, fontWeight: "700" },
   timelineRow: {
     borderWidth: 1,
@@ -1057,9 +1251,12 @@ const styles = StyleSheet.create({
   },
   progressTrack: { height: 6, borderRadius: 999, overflow: "hidden" },
   progressFill: { height: "100%", borderRadius: 999 },
-  metaRow: { flexDirection: "row", justifyContent: "space-between", gap: 8 },
+  metaRow: { flexDirection: "row", justifyContent: "space-between", gap: 8, flexWrap: "wrap" },
   metaText: { fontSize: 11, fontWeight: "700" },
-  detailsBtn: { borderRadius: 8, paddingVertical: 8, alignItems: "center" },
+  actionRow: { flexDirection: "row", gap: 8, alignItems: "center" },
+  payBtn: { flex: 1, borderRadius: 8, paddingVertical: 8, alignItems: "center" },
+  payBtnText: { color: "#fff", fontSize: 12, fontWeight: "800" },
+  detailsBtn: { borderRadius: 8, paddingVertical: 8, alignItems: "center", paddingHorizontal: 12 },
   detailsBtnText: { fontSize: 12, fontWeight: "800" },
   detailsBox: { borderWidth: 1, borderRadius: 10, padding: 10, gap: 4 },
   detailLine: { fontSize: 12, fontWeight: "600" },

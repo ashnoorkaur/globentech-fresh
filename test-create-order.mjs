@@ -1,4 +1,4 @@
-const BASE_URL = "http://localhost/Capstone-project";
+const BASE_URL = process.env.API_BASE_URL || "https://3-20-196-151.nip.io";
 const FIREBASE_API_KEY = "AIzaSyAqrrEiD7qMIWQ4Kduatkg5YOJUejYn0js";
 
 async function timedFetch(url, opts = {}, timeoutMs = 8000) {

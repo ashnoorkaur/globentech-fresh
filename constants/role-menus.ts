@@ -30,6 +30,7 @@ export const adminMenu: MenuItem[] = [
     route: "/admin-order-history",
   },
   { key: "users", label: "Manage Users", route: "/admin-users" },
+  { key: "queries", label: "Queries", route: "/admin-queries" },
   { key: "equipment", label: "Equipment", route: "/admin-equipment" },
   { key: "reports", label: "Reports", route: "/admin-reports" },
   { key: "about", label: "About", route: "/about" },
@@ -37,8 +38,7 @@ export const adminMenu: MenuItem[] = [
 
 export const technicianMenu: MenuItem[] = [
   { key: "dashboard", label: "Dashboard", route: "/technician-dashboard" },
-  { key: "tasks", label: "Assigned Tasks", route: "/technician-tasks" },
+  { key: "approvals", label: "Pending Approvals", route: "/technician-tasks" },
   { key: "calendar", label: "Calendar", route: "/technician-calendar" },
-  { key: "contact-us", label: "Contact Us", route: "/technician-contact" },
   { key: "about", label: "About", route: "/about" },
 ];

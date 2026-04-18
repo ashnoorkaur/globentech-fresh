@@ -22,9 +22,5 @@ export default function IndexPage() {
     );
   }
 
-  const role = session.user?.role;
-  if (role === "administrator") return <Redirect href="/admin-dashboard" />;
-  if (role === "technician") return <Redirect href="/technician-dashboard" />;
-  if (role === "customer") return <Redirect href="/customer-dashboard" />;
   return <Redirect href="/login" />;
 }

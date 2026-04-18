@@ -6,9 +6,13 @@ export function normalizeOrderStatusForCompare(value?: string | null): string {
     s.includes("disapprov") ||
     s.includes("declin") ||
     s.includes("deni") ||
-    s.includes("not_approved")
+    s.includes("not_approved") ||
+    (s.includes("cancel") && !s.includes("payment"))
   ) {
     return "rejected";
+  }
+  if (s.includes("payment")) {
+    return "payment_pending";
   }
   if (s.includes("complete") || s.includes("result") || s.includes("done")) {
     return "completed";

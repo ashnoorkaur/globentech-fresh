@@ -1,8 +1,9 @@
 export {
+    clearCustomerOrderDetailsCache,
     createCustomerOrder,
     fetchCustomerMyOrders,
     fetchCustomerOrderHistory,
     type CreateOrderPayload,
-    type CustomerOrderRow
+    type CustomerOrderRow,
 } from "./orders-api-enhanced";
 
