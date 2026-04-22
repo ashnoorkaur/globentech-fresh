@@ -460,7 +460,17 @@ const fetchLegacyAdminHtml = async (path: string, init?: RequestInit) => {
       }
 
       const html = await response.text();
-      if (/email address\s+password\s+login/i.test(stripTags(html))) {
+      const textContent = stripTags(html);
+      
+      // Detect login page by multiple indicators (title, form fields, common login phrases)
+      const looksLikeLoginPage = 
+        /<title\b[^>]*>\s*(?:login|sign\s*in|please\s+log\s+in)/i.test(html) ||
+        /name=["'](?:email|user|login)["']\s*[^>]*(?:type=["']text["']|)/i.test(html) &&
+        /name=["']password["']/i.test(html) ||
+        /email address\s+password\s+login/i.test(textContent) ||
+        /\blogin\b.*\bpassword\b/i.test(textContent);
+      
+      if (looksLikeLoginPage) {
         throw new Error("Session expired. Please log in again.");
       }
       return html;
@@ -1380,8 +1390,17 @@ const postLegacyApprovalAction = async (body: Record<string, string>) => {
     body: new URLSearchParams(body).toString(),
   });
 
+  // Check for success indicators in the response
+  const textContent = stripTags(html);
+  const hasError = /\b(?:error|failed|invalid|unable|not\s+found|does\s+not\s+exist|unauthorized)\b/i.test(textContent);
+  const hasSuccess = /\b(?:success|updated|approved|rejected|processed|confirmed)\b/i.test(textContent);
+  
+  if (hasError && !hasSuccess) {
+    throw new Error("Server returned an error. The approval action may not have completed.");
+  }
+
   return {
-    success: !/error/i.test(stripTags(html)),
+    success: !hasError || hasSuccess,
     message: "Order updated successfully.",
   };
 };

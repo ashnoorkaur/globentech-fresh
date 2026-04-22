@@ -154,11 +154,14 @@ export default function AdminApprovalsPage() {
       });
       initialFetchDoneRef.current = true;
     } catch (error) {
-      setErrorText(
-        error instanceof Error
-          ? error.message
-          : "Failed to load pending approvals.",
-      );
+      const errorMsg = error instanceof Error
+        ? error.message
+        : "Failed to load pending approvals.";
+      const isSessionError = errorMsg.toLowerCase().includes("session");
+      const helpText = isSessionError
+        ? `${errorMsg}\n\nTry logging out and logging back in to restore your session.`
+        : errorMsg;
+      setErrorText(helpText);
     } finally {
       setLoading(false);
       setSyncing(false);
@@ -250,9 +253,14 @@ export default function AdminApprovalsPage() {
         `${order.order_number} approved. Customer and technician views will show this order in the accepted flow.`,
       );
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Unable to approve order.";
+      const isSessionError = errorMsg.toLowerCase().includes("session");
+      const helpText = isSessionError
+        ? `${errorMsg}\n\nTry logging out and logging back in to restore your session.`
+        : errorMsg;
       feedback.showError(
         "Approval Failed",
-        error instanceof Error ? error.message : "Unable to approve order.",
+        helpText,
       );
     } finally {
       setBusyId(null);
@@ -275,9 +283,14 @@ export default function AdminApprovalsPage() {
       setRejectOrderTarget(null);
       setRejectReason("");
     } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : "Unable to reject order.";
+      const isSessionError = errorMsg.toLowerCase().includes("session");
+      const helpText = isSessionError
+        ? `${errorMsg}\n\nTry logging out and logging back in to restore your session.`
+        : errorMsg;
       feedback.showError(
         "Rejection Failed",
-        error instanceof Error ? error.message : "Unable to reject order.",
+        helpText,
       );
     } finally {
       setBusyId(null);
